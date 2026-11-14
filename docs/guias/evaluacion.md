@@ -47,7 +47,7 @@ lo mismo** (es la prueba de que el evaluador es correcto). Compara siempre contr
 dilo antes de medir nada más. Apunta esa fila en `docs/EXPERIMENTOS.md`. Commit y push.
 
 ## E2 · Medir cada versión que te pase Ranking — toda la tarde
-Cuando Ranking avise ("mide v1-covisitas"):
+Cuando Ranking avise ("mide e-samen-v1"):
 ```powershell
 git pull --rebase
 python -m src.evaluar --recalcular

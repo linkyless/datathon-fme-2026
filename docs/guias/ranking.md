@@ -31,7 +31,7 @@ Pega esto a tu agente:
 > Después ejecuta `python -m src.prueba_local`.
 
 **Hecho cuando:** devuelve co-visitas para la mayoría de productos y `prueba_local` pasa. Commit y push. Luego
-escribe en tu estado: *"Evaluación: mide covisitas v1 contra el baseline"* y cambia `NOMBRE` en ranking.py a
+escribe en tu estado: *"Evaluación: mide e-samen-v1 (co-visitas) contra el baseline"* y cambia `NOMBRE` en ranking.py a
 `"v1-covisitas"`.
 
 ## R2 · No repetir lo ya comprado — hasta las 15:15
@@ -43,7 +43,7 @@ Pega esto a tu agente:
 **Hecho cuando:** devuelve compradores con sus compras y la prueba pasa. Commit, push y aviso a Evaluación.
 
 ## R3 · Re-visitas y afinidad fina — de 15:30 a 18:00 (lo que más sube según el deep research)
-Una idea cada vez, medida por Evaluación antes de la siguiente. Cambia `NOMBRE` en cada versión (`v2-...`, `v3-...`).
+Una idea cada vez, medida por Evaluación antes de la siguiente. Cambia `NOMBRE` en cada versión (`e-samen-v2`, `e-samen-v3`…) y apunta en EXPERIMENTOS qué es cada una. El nombre sale en el leaderboard público: nunca pongas en él lo que hace.
 Añade cada idea como una clave de `PARAMS` (p. ej. `"revisitas": True`) para que el Operador pueda probarla en A/B.
 1. **Re-visitas:** los productos que ya ha visto en esta sesión y NO ha comprado, como candidatos con mucho peso
    (los más recientes primero). En OTTO era la señal más fuerte.

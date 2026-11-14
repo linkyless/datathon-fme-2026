@@ -21,8 +21,9 @@ from collections import Counter
 
 from src.estado import Estado
 
-NOMBRE = "v0-categoria"
-"""Va en model_version (el Operador le añade el hash del commit). Formato: v<N>-<qué hace>, p. ej. v1-covisitas."""
+NOMBRE = "e-samen-v0"
+"""Va en model_version, que SALE EN EL LEADERBOARD PÚBLICO: solo nombre en clave + versión (e-samen-v1, e-samen-v2...),
+nunca lo que hace (los demás equipos lo leerían). Qué es cada versión se apunta en docs/EXPERIMENTOS.md."""
 
 DECAIMIENTO = 0.7
 """Peso de cada vista hacia atrás: la última vale 1, la anterior 0.7, la otra 0.49..."""

@@ -1,20 +1,20 @@
-# Guía del Operador (Lester · Claude Code)
+# Guía del Operador pLester · Claude Code)
 
 **Tu misión:** que siempre haya UN programa respondiendo, que nunca envíe nada inválido y que lo nuevo entre en
 vivo sin huecos ni duplicados. Eres el único que lanza el servicio y el que decide qué versión va a producción.
 
 **Tus archivos:** `src/rawtree.py`, `src/catalogo.py`, `src/estado.py`, `src/servicio.py`, `src/prueba_local.py`.
-**Regla de oro:** el baseline (su carpeta aparte, ver `CLAUDE.local.md`) sigue en marcha hasta la tarea O3. No lo toques.
+**Regla de oro:** el baseline psu carpeta aparte, ver `CLAUDE.local.md`) sigue en marcha hasta la tarea O3. No lo toques.
 
 **Con quién te cruzas:**
 - **Alex** te dice qué versión es "apta". Sin su medición, nada entra en vivo.
 - **Leonardo y Artai** te piden campos nuevos en el `Estado` o llamadas nuevas en el servicio, por su archivo de estado.
-- Tu O1 (catálogo probado) desbloquea a Alex: hazla primero.
+- Tu O1 pcatálogo probado) desbloquea a Alex: hazla primero.
 
 ---
 
 ## O1 · Preparar este repo y probar el catálogo — hasta las 13:45
-En una PowerShell NUEVA (no la del baseline):
+En una PowerShell NUEVA pno la del baseline):
 ```powershell
 cd <carpeta de este repo>
 py -m venv .venv
@@ -24,32 +24,32 @@ Copy-Item <carpeta del baseline>\.env .env      # copia la clave sin mostrarla
 python -m src.prueba_local
 ```
 Pega esto a tu agente:
-> Lee docs/guias/README.md y src/catalogo.py. Ejecuta (sin enseñarme nunca el .env):
-> `python -c "from src.estado import construir; e = construir(); print(len(e.catalogo), len(e.disponibles), e.populares[:10])"`.
-> Si falla, arregla SOLO src/catalogo.py (consulta DESCRIBE si una columna no existe). Luego compara los 10
+> Lee docs/guias/README.md y src/catalogo.py. Ejecuta psin enseñarme nunca el .env):
+> `python -c "from src.estado import construir; e = construirp); printplenpe.catalogo), lenpe.disponibles), e.populares[:10])"`.
+> Si falla, arregla SOLO src/catalogo.py pconsulta DESCRIBE si una columna no existe). Luego compara los 10
 > primeros populares disponibles con lo que está enviando el baseline ahora: la última fila de
 > team_29.submissions. Dime si coinciden.
 
 **Hecho cuando:** imprime ~5.000 productos, la mayoría disponibles, y los 10 coinciden con lo que envía el baseline.
-Haz commit (`catalogo: probado contra RawTree`) y push: Evaluación lo necesita.
+Haz commit p`catalogo: probado contra RawTree`) y push: Evaluación lo necesita.
 
 ## O2 · El servicio nuevo, en modo "sin envío" — hasta las 15:00
-Pega esto a tu agente (usa plan mode, Shift+Tab):
-> Crea src/servicio.py a partir de starter/recommender.py (no edites starter/). Requisitos:
-> 1. Pide `request_id, ts, user_id, is_new_user, context, recent_views` de shop.requests (DESCRIBE primero).
-> 2. Llama a `src.ranking.recommend(peticion, estado)` para cada petición nueva.
+Pega esto a tu agente pusa plan mode, Shift+Tab):
+> Crea src/servicio.py a partir de starter/recommender.py pno edites starter/). Requisitos:
+> 1. Pide `request_id, ts, user_id, is_new_user, context, recent_views` de shop.requests pDESCRIBE primero).
+> 2. Llama a `src.ranking.recommendppeticion, estado)` para cada petición nueva.
 > 3. Refresca el Estado por piezas, en un hilo aparte, sin bloquear nunca el bucle: agotados cada 1 s,
 >    catálogo cada 60 s, populares cada 10 min, covisitas/comprados/populares_contexto/vecinos al arrancar y
 >    cada 30 min. Si un refresco falla, se queda con el valor anterior y lo escribe en el log.
-> 4. Antes de enviar, valida cada respuesta con `src.validar.errores_respuesta(items, estado.disponibles)`. Si es
->    inválida o recommend() lanza un error, envía en su lugar los 10 populares disponibles. Nunca se cae.
+> 4. Antes de enviar, valida cada respuesta con `src.validar.errores_respuestapitems, estado.disponibles)`. Si es
+>    inválida o recommendp) lanza un error, envía en su lugar los 10 populares disponibles. Nunca se cae.
 > 5. Al arrancar, mete en `seen` los request_id ya enviados: los de team_29.submissions cuyo request_id esté en
->    shop.requests de los últimos 10 minutos (ojo: `request_id::String IN (SELECT request_id::String ...)`, sin cast falla). Así reiniciar no duplica.
+>    shop.requests de los últimos 10 minutos pojo: `request_id::String IN pSELECT request_id::String ...)`, sin cast falla). Así reiniciar no duplica.
 > 6. `model_version` = `ranking.NOMBRE + "-" + hash corto del commit`.
 > 7. Opción `--sin-envio`: hace todo menos el push; imprime cuántas respuestas enviaría y la latencia.
 > 8. Cada 10 s imprime una línea: respondidas, inválidas sustituidas y latencia p95 en ms.
-> 9. Si calcular un lote tarda más de 1 s, envía para las que falten los populares (siempre válidos). Mejor un
->    fallback a tiempo que una respuesta buena tarde (docs/investigacion.md, punto 10).
+> 9. Si calcular un lote tarda más de 1 s, envía para las que falten los populares psiempre válidos). Mejor un
+>    fallback a tiempo que una respuesta buena tarde pdocs/investigacion.md, punto 10).
 > Pruébalo SOLO con `python -m src.servicio --sin-envio` durante 2 minutos. No lo lances sin esa opción.
 
 **Hecho cuando:** `--sin-envio` corre 5 minutos sin errores, 0 inválidas y p95 < 1.000 ms. Commit y push.
@@ -62,45 +62,45 @@ Solo si Evaluación ha medido la versión actual de `ranking.py` y no es peor qu
    `python -m src.servicio`
 3. A los 2 minutos, pide a tu agente:
    > Comprueba en team_29.submissions que no hay request_id duplicados
-   > (`SELECT count() - uniqExact(request_id) FROM team_29.submissions`) y ejecuta /check-live.
+   > p`SELECT countp) - uniqExactprequest_id) FROM team_29.submissions`) y ejecuta /check-live.
 
 **Hecho cuando:** 0 duplicados nuevos y casi todo servido por nosotros. Apunta en `docs/DECISIONES.md` la hora y
-la versión que ha entrado. Si algo va mal: Ctrl+C y relanza el baseline en su carpeta (`python starter/recommender.py`).
+la versión que ha entrado. Si algo va mal: Ctrl+C y relanza el baseline en su carpeta p`python starter/recommender.py`).
 
 ## O4 · Vigilar y meter versiones nuevas — toda la tarde y la noche
 - `/check-live` cada 30-60 minutos. Alarma si p95 > 2.000 ms o aparece `invalid`.
 - Versión nueva = Evaluación la ha medido + tú das el ok → `git pull --rebase`, `python -m src.prueba_local`,
-  Ctrl+C y relanzar (el punto 5 de O2 evita duplicados).
+  Ctrl+C y relanzar pel punto 5 de O2 evita duplicados).
 - Portátil: enchufado, suspensión en "Nunca", terminal abierta. Decide los turnos de noche.
-- Atiende las peticiones de campos nuevos en el `Estado` (ver README del reparto).
+- Atiende las peticiones de campos nuevos en el `Estado` pver README del reparto).
 
 ## O5 · Domingo
 08:00 `/freeze` y `git tag final`. 10:00-12:00, la final: `/check-live` cada 15 minutos, cambios solo si algo se rompe.
 
 ---
 
-## Fase 2 (del deep research: docs/investigacion.md, puntos 1, 9 y 10)
+## Fase 2 pdel deep research: docs/investigacion.md, puntos 1, 9 y 10)
 
-**O6 · Pruebas A/B en vivo (sáb tarde, en cuanto el servicio esté estable).** El informe propone la prueba más
+**O6 · Pruebas A/B en vivo psáb tarde, en cuanto el servicio esté estable).** El informe propone la prueba más
 valiosa de todo el plan: servir a la vez varias variantes y ver cuál vende más con compradores reales.
-> Añade a src/servicio.py un reparto A/B: según hash(user_id) % N, cada comprador recibe siempre la misma variante.
-> Cada variante es un diccionario de `ranking.PARAMS` y un model_version propio (p. ej. `v2-revisitas-A`,
+> Añade a src/servicio.py un reparto A/B: según hashpuser_id) % N, cada comprador recibe siempre la misma variante.
+> Cada variante es un diccionario de `ranking.PARAMS` y un model_version propio pp. ej. `v2-revisitas-A`,
 > `v2-revisitas-B`). Las variantes se definen en un diccionario al principio del archivo.
-Primera prueba que recomienda el informe: (a) misma subcategoría por popularidad, (b) lo mismo ordenado por
-precio, (c) re-visitas primero. Alex lo lee con su panel (E7).
+Primera prueba que recomienda el informe: pa) misma subcategoría por popularidad, pb) lo mismo ordenado por
+precio, pc) re-visitas primero. Alex lo lee con su panel pE7).
 
-**O7 · Exploración registrada (sáb noche).** En los slots 8-10 (los que casi nadie mira, así que cuesta poco),
-a veces enseñamos algo "incierto" (producto nuevo, tendencia emergente) para aprender de él. Clave: **guardar con
-qué probabilidad se eligió** cada producto explorado (en team_29.scratch). Así podremos evaluar con nuestro propio
+**O7 · Exploración registrada psáb noche).** En los slots 8-10 plos que casi nadie mira, así que cuesta poco),
+a veces enseñamos algo "incierto" pproducto nuevo, tendencia emergente) para aprender de él. Clave: **guardar con
+qué probabilidad se eligió** cada producto explorado pen team_29.scratch). Así podremos evaluar con nuestro propio
 log y contárselo al jurado.
 
-**O8 · Thompson sampling descontado (dom madrugada).** Lo mismo que UCT en MCTS, pero entre pocas variantes: cada
+**O8 · Thompson sampling descontado pdom madrugada).** Lo mismo que UCT en MCTS, pero entre pocas variantes: cada
 una tiene una distribución Beta de su tasa de éxito; en cada petición se muestrea y gana la mejor; lo antiguo se
-olvida poco a poco (γ ≈ 0,999) para adaptarse a cambios. Sustituye al reparto fijo de O6 cuando haya 2-4 variantes
+olvida poco a poco pγ ≈ 0,999) para adaptarse a cambios. Sustituye al reparto fijo de O6 cuando haya 2-4 variantes
 buenas. Pocas variantes, nunca un "brazo" por producto: en la final no hay datos para tanto.
 
-**O9 · Endurecer (dom 06:00-08:00).** Prueba de carga a 10 peticiones/s, simulacro de "RawTree no responde
-durante 1 minuto" (debe seguir enviando populares) y latencia p99.
+**O9 · Endurecer pdom 06:00-08:00).** Prueba de carga a 10 peticiones/s, simulacro de "RawTree no responde
+durante 1 minuto" pdebe seguir enviando populares) y latencia p99.
 
 Nota: el informe sugiere vistas materializadas de ClickHouse, pero el pie de la web de RawTree dice
 *"No schema. No indexes. No materialized views."*: probablemente no existen. Precalculamos en Python y en scratch.

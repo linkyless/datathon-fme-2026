@@ -1,6 +1,6 @@
 # Estado de Alex
 
-- **Rol:** _por decidir_
+- **Rol:** Evaluación (docs/guias/evaluacion.md)
 - **Actualizado:** _nunca_
 
 ## Haciendo ahora

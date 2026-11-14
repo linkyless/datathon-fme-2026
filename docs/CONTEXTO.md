@@ -21,7 +21,7 @@ lo lea (Claude Code u OpenCode) tenga TODO el contexto y pueda decidir el siguie
   - Carpeta: `C:\Users\linky\datathon-fme-2026` (clon del starter oficial), con su propio `.venv` y su `.env`.
 - Credenciales: `TEAM_ID=team_29`. La `RAWTREE_API_KEY` está en el `.env` (no copiarla nunca a ningún sitio). Se
   probó con una consulta `SELECT 1` y funciona.
-- Nuestro repo (este) está descomprimido o por descomprimir en `C:\Users\linky\datathon-repo`. **Pendiente:**
+- Nuestro repo (este) está en `E:\Programming\datathon\datathon-fme-2026` y en GitHub (`linkyless/datathon-fme-2026`). **Hecho a las 13:00** (lo de abajo era el plan):
   `git init`, primer commit, subirlo a GitHub privado (`gh repo create datathon-fme-2026 --private --source=. --push`)
   e invitar a Leonardo, Alex y Artai como colaboradores. Usuario de GitHub de Lester: `linkyless`.
 - Roles del ROADMAP: **sin asignar todavía**.

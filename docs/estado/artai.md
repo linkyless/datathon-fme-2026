@@ -1,6 +1,6 @@
 # Estado de Artai
 
-- **Rol:** _por decidir_
+- **Rol:** Datos y relato (docs/guias/datos.md)
 - **Actualizado:** _nunca_
 
 ## Haciendo ahora

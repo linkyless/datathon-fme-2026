@@ -32,6 +32,9 @@ El equipo son cuatro estudiantes (Lester, Leonardo, Alex, Artai). **La mayoría 
    ni modelos al repo.
 7. El equipo tiene que poder explicar todo al jurado. Si propones algo no trivial, añade 2-3 frases en
    `docs/DECISIONES.md` explicándolo como a un product manager.
+8. **Cada archivo tiene un dueño** (tabla en `docs/guias/README.md`). Solo editas los archivos del rol de tu
+   persona. Si hace falta cambiar uno ajeno, para y pídeselo al dueño en "Necesito de alguien" de su estado.
+   Lo que la persona debe hacer está en su guía: `docs/guias/<rol>.md`. Síguela en orden.
 
 ## Cómo trabajamos los cuatro (contexto compartido)
 - La única memoria común es este repo. Lo que no está escrito aquí, los demás (y sus agentes) no lo saben.
@@ -50,6 +53,8 @@ starter/             ← starter kit OFICIAL de los organizadores (no lo edites;
 src/                 ← nuestro código (servicio, features, evaluación, validador)
 docs/reto.md         ← el reto completo     docs/rawtree.md   ← API y trucos SQL
 docs/ROADMAP.md      ← plan y quién hace qué docs/GUIA.md      ← guía y FAQ para humanos
+docs/guias/          ← reparto: contrato, dueños de archivos y una guía por rol (EMPIEZA AQUÍ)
+src/estado.py        ← el contrato: qué sabe recommend() · src/ranking.py ← recommend(peticion, estado)
 docs/estado/         ← un archivo por persona docs/procedimientos/ ← pasos de /empezar, /handoff, /eval...
 docs/DECISIONES.md   docs/EXPERIMENTOS.md
 docs/CONTEXTO.md     ← todo lo ocurrido antes de empezar a programar (léelo una vez)
@@ -64,6 +69,7 @@ source .venv/bin/activate            # Windows (PowerShell): .venv\Scripts\Activ
 pip install -r requirements.txt
 git config core.hooksPath .githooks  # una vez por persona: activa el bloqueo de claves
 python -m src.validar                # autotest del validador
+python -m src.prueba_local           # prueba sin red: todo importa y recommend() es válido (antes de cada commit)
 python starter/recommender.py        # baseline oficial EN VIVO (solo el operador)
 ```
 
@@ -82,9 +88,11 @@ python starter/recommender.py        # baseline oficial EN VIVO (solo el operado
 5. Python 3.11+, funciones pequeñas con nombres claros, comentarios en español solo donde aporten.
 
 ## Git (versión principiante)
-- Antes de empezar: `git pull --rebase`. Trabaja en una rama: `git switch -c nombre/tarea` (ej. `alex/coview`).
+- Como cada uno solo toca sus archivos, se trabaja directamente en `main`: `git pull --rebase` → cambios →
+  `python -m src.prueba_local` → commit → `git pull --rebase` → `git push`. Si `prueba_local` falla, no se sube.
 - Commits pequeños en español: `coview: filtra productos ya comprados`. Añade archivos concretos (`git add src/x.py`), nunca `git add .` a ciegas.
-- `git push` lo decide siempre la persona, no el agente. A `main` solo llega lo que funciona.
+- `git push` lo decide siempre la persona, no el agente. Estar en `main` NO es estar en vivo: solo pasa a vivo
+  cuando Evaluación lo ha medido y el Operador reinicia el servicio.
 - La versión que corre en la ronda final se etiqueta: `git tag final`.
 
 ## Calendario (hora de Barcelona)

@@ -1,6 +1,6 @@
 # Estado de Leonardo
 
-- **Rol:** _por decidir_
+- **Rol:** Ranking (docs/guias/ranking.md)
 - **Actualizado:** _nunca_
 
 ## Haciendo ahora

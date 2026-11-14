@@ -1,12 +1,14 @@
 # ROADMAP
 
 ## Roles (rellenar el nombre en los primeros 5 minutos)
+**Cada rol tiene su guía paso a paso en `docs/guias/`** (contrato, dueños de archivos y tareas con hora límite).
+
 | Rol | Persona | Herramienta | Qué hace |
 |---|---|---|---|
-| **Operador** | _?_ | Claude Code | Único que ejecuta el servicio en vivo. Robustez, fallback, monitor, portátil enchufado. |
-| **Ranking** | _?_ | Claude Code | La función `recommend()`: co-visitas, tendencias, filtros, orden final. |
-| **Evaluación** | _?_ | Claude Code | Evaluación offline (IPS) de cada idea antes de ir en vivo. Registro en EXPERIMENTOS. |
-| **Datos y relato** | _?_ | OpenCode (GLM) | Exploración SQL, embeddings del catálogo, cold start, y slides/demo desde el sábado. |
+| **Operador** | Lester | Claude Code | Único que ejecuta el servicio en vivo. Robustez, fallback, monitor, portátil enchufado. |
+| **Ranking** | Leonardo | Claude Code | La función `recommend()`: co-visitas, tendencias, filtros, orden final. |
+| **Evaluación** | Alex | Claude Code | Evaluación offline (IPS) de cada idea antes de ir en vivo. Registro en EXPERIMENTOS. |
+| **Datos y relato** | Artai | OpenCode (GLM) | Exploración SQL, embeddings del catálogo, cold start, y slides/demo desde el sábado. |
 
 Regla: una idea solo va a producción si **Evaluación** la ha medido offline contra el baseline y el **Operador** dice ok.
 

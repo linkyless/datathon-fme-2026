@@ -4,7 +4,7 @@
 - **Actualizado:** sáb ~14:50
 
 ## Haciendo ahora
-- (Libre para slides/relato; pide a Evaluación medir el segmento frío.)
+- Presentación + panel Tukey listos; pidiendo números a Evaluación y resultados en vivo para rellenar los **[PENDIENTE]** de docs/presentacion.md.
 
 ## Terminado
 - **D1 embeddings**: `src/embeddings.py` (`python -m src.embeddings`), commit `5159f0b`.
@@ -16,6 +16,8 @@
 - **D4 vecinos**: `cargar_vecinos(hasta)` + `embeber_nuevos()` en `src/coldstart.py` (commit `7aafb58`).
   - 5.100 productos con 20 vecinos (98,4 % misma categoría, 77 % misma subcategoría; ~6 s por carga).
   - Los 100 `new_product` de `catalog_updates` ya están embebidos (NO están en shop.catalog: llegan solo por updates).
+- **D5 presentación**: `docs/presentacion.md` reescrita alrededor del side challenge Tukey (detalles del panel en la sección 3; huecos **[PENDIENTE]** para resultados que aún no hay).
+- **Side challenge Tukey**: `src/panel_tukey.py` → `data/panel.html` (9 paneles, uno por pregunta del reto, con la decisión que alimenta; autocontenido, sin CDN; `--loop 60` para la demo). Fila añadida a DECISIONES.
 - IMPORTANTE: he añadido `HELMCODE_API_KEY` al `.env` de este repo.
 
 ## Descubierto (cosas que los demás deben saber)

@@ -69,7 +69,9 @@ Todo el panel lee de las MISMAS tablas que usan el evaluador y el servicio (`tea
 `shop.events`, `shop.catalog_updates`, `docs/EXPERIMENTOS.md`) → **criterio 3 de Tukey (coherencia)**: lo
 que ves en el panel es exactamente el número con el que decidimos; ninguna métrica tiene dos definiciones.
 
-**[PENDIENTE: captura del dashboard + enlace/dato del prototipo en directo]**
+**Prototipo hecho**: `python -m src.panel_tukey` → `data/panel.html` (autocontenido, sin servidor: se abre
+en el navegador; `--loop 60` lo refresca cada minuto para la demo). **[PENDIENTE: captura de pantalla para la
+diapositiva + números frescos 30 min antes de presentar]**
 
 ## 4. Cómo validamos antes de arriesgar (sin fórmulas)
 

@@ -1,13 +1,13 @@
 # Estado de Lester
 
 - **Rol:** Operador (docs/guias/operador.md)
-- **Actualizado:** dom 00:05
+- **Actualizado:** sáb 23:50
 
 ## Haciendo ahora
-- **EN VIVO desde dom ~00:05: prueba a cuartos `-AP3` / `-AP4` / `-AP5` / `-AP6`** (`python -m src.servicio --ap4`).
+- **EN VIVO desde sáb 23:47: prueba a cuartos `-AP3` / `-AP4` / `-AP5` / `-AP6`** (`python -m src.servicio --ap4`).
   Mismos pesos y candidatos que AP3; cambia el orden: bono 1,2 / bono 3,0 a lo suyo / lista por niveles
-  (`recomendar_con_bono`, `recomendar_por_niveles` en servicio.py). Fila dom 00:05 de EXPERIMENTOS. Se lee en la API.
-- Antes: AP3 al 100 % sin exploración (sáb 23:16-00:05); AP3 frente a exploración (21:43-23:16).
+  (`recomendar_con_bono`, `recomendar_por_niveles` en servicio.py). Fila sáb 23:47 de EXPERIMENTOS. Se lee en la API.
+- Antes: AP3 al 100 % sin exploración (sáb 23:16-23:47); AP3 frente a exploración (21:43-23:16).
 - Antes, AP2 frente a C (20:47-21:43): AP2 gana (Alex: compras reales 2,03 % frente a 0,83 %, IC [+0,56, +1,87]).
 - Lectura del A/B a las 22:30 (API, 21:29-22:29): AP3 1,75 · EXP1 1,84 · **EXP1x 1,49**. Explorar cuesta ~0,3 puntos
   en las peticiones que exploran (el modelo estimaba 0,08). Como explora 1 de cada 4 peticiones nuestras, el equipo

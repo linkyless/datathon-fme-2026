@@ -42,6 +42,9 @@
 - R5 (sin filtro) elige productos de ~61-79 € de media frente a ~46 € de C.
 - **Fiabilidad**: "On time" 83,6 % en la última hora. Causas: 8 reinicios por la tarde + cortes de red (15:51-16:04
   sin conexión; timeouts de RawTree a ratos, edad al ver la petición de hasta 4 s). Es lo que más puntos pierde ahora.
+- **Causa de la fiabilidad baja = NUESTRA wifi** (medido 17:50): señal 48 % en DatathonFME2026, 10 % de paquetes
+  perdidos, ping 11-471 ms (media 138). Los demás equipos tienen 98-99 % a tiempo con el mismo RawTree. Las pérdidas
+  salen como `missing` (nunca `late`): a las 17:40 se perdieron 284 sin reinicio; las piezas pesadas tardaron 261 s.
 - `team_29.submissions` no tiene `ts`: para filtrar por tiempo, `request_id IN (SELECT ... FROM shop.requests WHERE ts ...)`.
 - Cada viaje a RawTree cuesta ~300 ms. Reloj del portátil ~8 s detrás del servidor: edades en SQL.
 
@@ -50,5 +53,7 @@
   las compras de productos ya comprados (no existen en vivo).
 - **Leonardo (Ranking):** reentrenar R5 sin la señal `ya_comprado` y sin las filas de recompras; mirar el peso del
   precio. Cuando Alex lo mida, se decide si entra en vivo.
+- **Lester (persona):** mejorar la red ANTES de la noche: acercarse al router/punto de acceso, hotspot del móvil o
+  adaptador de cable. Opción grande a decidir: correr el servicio en una máquina en la nube (no depende de la wifi).
 - **Todos:** cualquier cambio que deba ir en vivo, primero medido por Alex y apuntado en EXPERIMENTOS; después el
   Operador decide y reinicia una sola vez.

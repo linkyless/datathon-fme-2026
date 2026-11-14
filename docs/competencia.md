@@ -33,3 +33,19 @@ Fuente: https://datathon.rawtree.dev/leaderboard. Añadir una foto nueva cada po
    entre dos versiones para compararlas con datos reales. Lo haremos (fase 2, "aprender del stream").
 7. **Nuestro 84 % a tiempo** es porque el baseline arrancó a las 12:27 y la ventana empieza a las 12:16 (11 minutos
    sin responder). En la próxima hora debería salir ~99 %. Si no, hay un problema.
+
+## Foto sáb 14:11 (ventana 13:11–14:11)
+| Fila | Conversión | Cold start | A tiempo | € / petición | model_version |
+|---|---|---|---|---|---|
+| Reference | 2.0389 % | 1.9080 % | | €0.940 | |
+| team_06 (1º) | 1.2741 % | 1.8075 % | 75.4 % | €0.525 | v4a |
+| team_09 | 1.1372 % | 1.5413 % | 99.7 % | €0.445 | aneto |
+| team_26 | 0.9927 % | 1.6420 % | 76.5 % | €0.450 | v1-gbm-cand |
+| team_20 | 0.9472 % | 1.6115 % | 99.9 % | €0.403 | subcategory-v2 |
+| team_05 | 0.9373 % | 1.5042 % | 73.2 % | €0.289 | super-markov-bros |
+| team_29 (nosotros) | 0.7218 % | 1.2812 % | 91.4 % | €0.130 | e-samen-v0-6804453 (solo 3 min de v0: el resto era el baseline) |
+| Baseline | 0.6979 % | 1.2216 % | | €0.109 | |
+
+- El nivel sube rápido: el 1º pasó de 0,85 % a 1,27 % en una hora. La subcategoría (subcategory-v2: 0,95 %) gana a la categoría (0,79 %), como predecía docs/investigacion.md.
+- El baseline varía entre horas (0,659 % → 0,698 %): comparad siempre dentro de la MISMA ventana.
+- Nuestro 91,4 % a tiempo: el baseline del starter perdió 565 peticiones entre 13:45 y 13:55 y 315 entre 14:00 y 14:08 (consultas colgadas o wifi). Desde el relevo, 0 perdidas fuera de los reinicios.

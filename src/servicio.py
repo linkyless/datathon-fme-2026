@@ -57,10 +57,10 @@ _CANDADO = threading.Lock()
 
 _V0 = {"_sin_covisitas": True, "_sin_comprados": True}
 VARIANTES: list[tuple[str, dict]] = [
-    ("-C", _V0),                                          # v0: populares de su categoría
-    ("-T", {**_V0, "tendencia": 0.5}),                    # v0 + tendencias de la última media hora
-    ("-M", {"usar_modelo": True}),                        # R5: la regresión logística elige y ordena
-    ("-MT", {"usar_modelo": True, "tendencia": 0.5}),     # R5 + tendencias
+    ("-C", _V0),                                                          # v0: populares de su categoría
+    ("-CF", {**_V0, "_filtrar_comprados": True}),                         # v0 sin lo que ya compró
+    ("-MF", {"usar_modelo": True, "_filtrar_comprados": True}),           # R5 sin lo que ya compró
+    ("-MTF", {"usar_modelo": True, "tendencia": 0.5, "_filtrar_comprados": True}),  # R5 + tendencias, ídem
 ]
 """Reparto A/B (tarea O6). Cada comprador cae SIEMPRE en la misma variante: hash(user_id) % len(VARIANTES).
 Cada variante = (sufijo del nombre, params para ranking.recommend). Ejemplo para probar re-visitas:
@@ -70,7 +70,10 @@ Claves especiales (las aplica el servicio, no ranking): "_sin_covisitas" y "_sin
 A/B 16:41-16:55: A = v1 sin co-visitas, B = v1 completa (las dos con filtro de comprados: A no era la v0).
 A/B 16:51-17:10: C = v0 real · D = co-visitas sin filtro -> D pierde (0,78 % vs 1,00 %).
 A/B 17:06-17:20: C vs E (re-visitas) -> E por debajo (0,74 % vs 0,97 %, 458 pet.).
-A/B actual (sáb 17:20): 2×2 = {v0, modelo R5} × {sin, con tendencias}. Cada brazo, 1/4 del tráfico."""
+A/B 17:17-17:28: C, T, M, MT -> M y MT hundidos: ponían lo YA COMPRADO arriba (61 % de los 1.º) y los organizadores
+confirman que en vivo no hay recompras.
+A/B actual (sáb 17:30): C · CF · MF · MTF. "_filtrar_comprados" quita de los disponibles de ESE comprador lo que ya compró
+(sirve igual para las reglas y para el modelo, que si no lo pondría arriba)."""
 
 
 def variante(peticion: dict) -> tuple[str, dict]:
@@ -201,6 +204,11 @@ def respuesta_segura(peticion: dict, estado: Estado, mv: str) -> tuple[dict, boo
     sufijo, params = variante(peticion)
     mv = mv + sufijo
     try:
+        if params.get("_filtrar_comprados"):
+            ya = estado.comprados.get(str(peticion.get("user_id", "")))
+            if ya:
+                estado = dataclasses.replace(estado, disponibles=disponibles - ya)
+            params = {k: v for k, v in params.items() if k != "_filtrar_comprados"}
         vaciar = {"_sin_covisitas": "covisitas", "_sin_comprados": "comprados"}
         if any(params.get(k) for k in vaciar):
             estado = dataclasses.replace(estado, **{campo: {} for k, campo in vaciar.items() if params.get(k)})

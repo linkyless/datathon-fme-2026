@@ -2,8 +2,8 @@
 
 Idea (como en OTTO, docs/investigacion.md punto 5): dos productos están relacionados si aparecen en la misma
 sesión. Para el par (X -> Y) sumamos, por cada sesión donde salen los dos, un peso según lo que el comprador
-hizo con Y: solo verlo 1, añadirlo al carrito 6, comprarlo 3. Luego dividimos por la raíz de la popularidad de
-Y, para que los productos que salen en todas partes no ganen siempre.
+hizo con Y: solo verlo 1, añadirlo al carrito 6, comprarlo 3. Se puede dividir por la popularidad de Y elevada
+a EXPONENTE_POPULARIDAD para que lo que sale en todas partes no gane siempre (ver abajo por qué está a 0).
 
 Detalles medidos el sáb 14/11:
 - Cada sesión cuenta UNA vez por par (si vio Y tres veces no suma tres): se usa el mayor peso de Y en la sesión.
@@ -22,7 +22,10 @@ VECINOS = 20
 """Cuántos productos relacionados guardamos por producto."""
 
 PESO_VISTA, PESO_CARRITO, PESO_COMPRA = 1, 6, 3
-EXPONENTE_POPULARIDAD = 0.5
+EXPONENTE_POPULARIDAD = 0.0
+"""0 = sin dividir por popularidad. El deep research proponía 0.5, pero sobre las 3.530 compras del carrusel
+posteriores al 2026-11-07 (chequeo de Leonardo, sáb 14/11) las compras dentro de nuestros 10 fueron: exponente 0
+-> 14,76 %, 0.25 -> 12,83 %, 0.5 -> 11,47 % (con IPS: 2,18 / 2,05 / 1,89). Al modelo oculto le gusta lo popular."""
 
 _DATA = Path(__file__).resolve().parent.parent / "data"
 
@@ -51,7 +54,7 @@ LIMIT {vecinos} BY p"""
 
 
 def _archivo(hasta: str | None) -> Path:
-    return _DATA / f"covisitas_{hasta or 'todo'}.json"
+    return _DATA / f"covisitas_{hasta or 'todo'}_exp{EXPONENTE_POPULARIDAD:g}.json"
 
 
 def _consultar(hasta: str | None) -> dict[str, list[tuple[str, float]]]:
@@ -68,8 +71,8 @@ def cargar_covisitas(hasta: str | None = None) -> dict[str, list[tuple[str, floa
     """product_id -> [(otro_product_id, peso), ...] ordenado de mayor a menor peso (máx. VECINOS por producto).
 
     `hasta` ('YYYY-MM-DD'): usar solo eventos con ts < hasta. None = todo (en vivo).
-    La consulta es pesada: el resultado se guarda en data/covisitas_<hasta>.json y se reutiliza. Para
-    recalcular, borra ese archivo.
+    La consulta es pesada: el resultado se guarda en data/covisitas_<hasta>_exp<exponente>.json y se reutiliza.
+    Para recalcular, borra ese archivo.
     """
     if hasta is not None and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", hasta):
         raise ValueError(f"hasta debe ser 'YYYY-MM-DD', no {hasta!r}")

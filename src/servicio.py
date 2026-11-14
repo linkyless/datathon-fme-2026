@@ -65,13 +65,18 @@ def log(msg: str) -> None:
         pass
 
 
-def version_modelo() -> str:
-    """model_version = nombre público + hash corto del commit (p. ej. e-samen-v0-585b849)."""
+def commit_actual() -> str:
+    """Hash corto del commit que corre. Solo para el log (NO va en el nombre público)."""
     try:
         h = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=5)
-        return f"{ranking.NOMBRE}-{h.stdout.strip() or 'sin-git'}"
+        return h.stdout.strip() or "sin-git"
     except Exception:
-        return f"{ranking.NOMBRE}-sin-git"
+        return "sin-git"
+
+
+def version_modelo() -> str:
+    """model_version = solo el nombre público (e-samen-v0). Sale en el leaderboard: nada de hashes."""
+    return ranking.NOMBRE
 
 
 # ---------------------------------------------------------------- Estado y su refresco (hilo 3)
@@ -138,7 +143,7 @@ def respuesta_segura(peticion: dict, estado: Estado, mv: str) -> tuple[dict, boo
     except Exception as e:
         log(f"recommend falló en {peticion.get('request_id')}: {e}")
     items = [p for p in estado.populares if p in disponibles][:10]
-    return {"request_id": peticion["request_id"], "items": items, "model_version": mv + "-fallback"}, True
+    return {"request_id": peticion["request_id"], "items": items, "model_version": mv}, True
 
 
 # ---------------------------------------------------------------- Envío (hilo 2)
@@ -170,7 +175,7 @@ def main() -> None:
     args = ap.parse_args()
 
     mv = version_modelo()
-    log(f"arrancando {mv} | equipo {TEAM} | {'SIN ENVÍO (prueba)' if args.sin_envio else 'EN VIVO'}")
+    log(f"arrancando {mv} (commit {commit_actual()}) | equipo {TEAM} | {'SIN ENVÍO (prueba)' if args.sin_envio else 'EN VIVO'}")
     estado = estado_inicial()
     log(f"estado inicial listo: {len(estado.catalogo)} productos, {len(estado.disponibles)} disponibles")
     parar = threading.Event()

@@ -64,11 +64,12 @@ VARIANTES: list[tuple[str, dict]] = [
     ("-CF", _CF),
 ]
 VARIANTES_V2: list[tuple[str, dict]] = [
-    ("-A6", {"_combo": True}),
+    ("-A7", {"_combo": True}),
 ]
-"""Decisión de Lester (sáb 19:40): la más fuerte se lo lleva todo (100 %, sin validar por Evaluación todavía).
-_combo = con vistas: árbol R6 de Leonardo (acierto del 1.º 38,4 % offline, v2 34,9 %, v0 33,7 %);
-sin vistas: su categoría favorita ordenada con la v2 (×8 de conversión en el historial). Lo comprado se quita."""
+"""100 % (sáb 19:05). Con vistas: árbol R6 de Leonardo. Sin vistas: lo de CF (más vendidos de siempre sin lo comprado).
+A6 (18:51-19:05, mismo árbol + categoría favorita para los sin vistas) frente a CF (API, 1.976 pet.): total 1,089 % vs
+1,057 %, €/pet. 0,579 vs 0,404, NO fríos ~0,98 vs ~0,74 (+32 %), pero fríos 1,28 vs 1,62 (−21 %): la "favorita" se
+midió con FUGA (actividad posterior a la respuesta) y en vivo resta. Por eso A7 se queda el árbol y quita la favorita."""
 """Decisión de Lester (sáb 18:45): la más fuerte se lo lleva todo, sin reparto. Se compara con el baseline de la misma
 ventana del leaderboard y con CF de antes (~1,06 %)."""
 VARIANTES_V3: list[tuple[str, dict]] = [                  # PARA MÁS ADELANTE (fríos a su categoría favorita)
@@ -240,8 +241,8 @@ def respuesta_segura(peticion: dict, estado: Estado, mv: str) -> tuple[dict, boo
         tiene_vistas = any(v.get("product_id") for v in (peticion.get("recent_views") or []))
         if params.get("_combo") and tiene_vistas:
             items = ranking.recommend(peticion, estado, {"usar_arbol": True, "filtrar_comprados": True})
-        elif params.get("_combo"):
-            items = eleccion.recomendar(peticion, estado, MODELO_ELECCION, filtrar_comprados=True, favoritas_frio=True)
+        elif params.get("_combo"):  # sin vistas: lo de CF (más vendidos de siempre sin lo ya comprado, 1,62 % medido)
+            items = ranking.recommend(peticion, estado, {"filtrar_comprados": True})
         elif params.get("_eleccion"):
             items = eleccion.recomendar(peticion, estado, MODELO_ELECCION, filtrar_comprados=params.get("_filtrar", True),
                                         favoritas_frio=params.get("_favoritas", False))

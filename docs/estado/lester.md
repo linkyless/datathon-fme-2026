@@ -1,17 +1,17 @@
 # Estado de Lester
 
 - **Rol:** Operador (docs/guias/operador.md)
-- **Actualizado:** sáb 18:55
+- **Actualizado:** sáb 19:10
 
 ## Haciendo ahora
-- **EN VIVO desde 18:51: `e-samen-v1-A6` al 100 %** (`python -m src.servicio --v2`, ventana "EN VIVO e-samen A6").
-  Decisión de Lester: la versión más fuerte se lo lleva todo, sin reparto y sin validar todavía por Evaluación.
-  - Con vistas (2/3): árbol R6 de Leonardo (`ranking.recommend(..., {"usar_arbol": True})`).
-  - Sin vistas (1/3): su categoría favorita (`eleccion.cargar_categorias_usuario`) ordenada con la v2.
-  - Lo ya comprado se quita. Antes de reiniciar en otra máquina: `pip install -r requirements.txt`,
-    `python -m src.eleccion` y `python -m src.arbol` (crean data/eleccion.json y data/arbol.*).
-- Comparar con CF de antes (~1,06 %) y con el baseline de la misma ventana (API del leaderboard).
-- Red: hotspot del móvil (a ratos también pierde paquetes).
+- **EN VIVO desde 19:07: `e-samen-v1-A7` al 100 %** (`python -m src.servicio --v2`). Con vistas: árbol R6 (Leonardo).
+  Sin vistas: más vendidos de siempre sin lo ya comprado (lo de CF). Antes de relanzar en otra máquina:
+  `pip install -r requirements.txt`, `python -m src.eleccion` y `python -m src.arbol`.
+- A6 (18:51-19:07) enseñó que el árbol suma (+32 % no fríos, +43 % €) y que mi "categoría favorita" para fríos restaba
+  (−21 %): la había medido con FUGA de futuro. Corregido en EXPERIMENTOS.
+- Preparado, no en vivo: `src/vivo.py` (v4), logística aprendida del feedback en vivo SIN fuga. Siguiente candidato
+  para los fríos y para combinarlo con el árbol.
+- Red: hotspot, con cortes a ratos.
 
 ## Plan del equipo para esta noche (acordado sáb 18:05) — objetivo: pasar del ~1,2 % a > 2 %
 Medido (3.530 compras del carrusel tras el 2026-11-07, comparadas con lo último visto):

@@ -39,6 +39,7 @@ MODELO = "qwen3-embedding"
 MAX_TEXTOS = 32          # límite de la API por petición
 PAUSA_S = 1.1            # 60 peticiones/min -> ~1 s de margen
 ESPERA_429_S = 20.0
+REINTENTOS_429 = 5       # si HelmCode sigue saturado tras estos, se suelta y se reintenta luego
 LOTE_SCRATCH = 100
 
 DATA = Path(__file__).resolve().parent.parent / "data"
@@ -86,11 +87,17 @@ def leer_catalogo() -> list[dict]:
 
 
 def pedir_embeddings(textos: list[str]) -> list[list[float]]:
-    """Pide embeddings de un lote (<= 32); reintenta con espera si hay 429."""
+    """Pide embeddings de un lote (<= 32); reintenta con espera si hay 429.
+
+    Los 429 no se reintentan para siempre: tras REINTENTOS_429 se suelta con excepción
+    para que el servicio (o la siguiente ejecución) lo reintente más tarde y el hilo
+    de refresco del Estado nunca se quede atascado aquí.
+    """
     clave = os.environ.get("HELMCODE_API_KEY", "")
     if not clave:
         # Sin rastro de la clave en el mensaje: solo avisa de que falta.
         raise SystemExit("Falta HELMCODE_API_KEY en el .env (no la escribas en el código).")
+    fallos_429 = 0
     while True:
         r = _helm.post(
             URL_EMBEDDINGS,
@@ -99,7 +106,10 @@ def pedir_embeddings(textos: list[str]) -> list[list[float]]:
             timeout=120,
         )
         if r.status_code == 429:
-            print(f"    429: esperando {ESPERA_429_S:.0f} s y reintentando...")
+            fallos_429 += 1
+            if fallos_429 > REINTENTOS_429:
+                raise RuntimeError(f"HelmCode 429 tras {REINTENTOS_429} reintentos (saturado)")
+            print(f"    429 ({fallos_429}/{REINTENTOS_429}): esperando {ESPERA_429_S:.0f} s...")
             time.sleep(ESPERA_429_S)
             continue
         if r.status_code >= 400:

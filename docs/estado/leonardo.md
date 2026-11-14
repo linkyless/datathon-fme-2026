@@ -4,7 +4,7 @@
 - **Actualizado:** sáb 14/11 ~17:10
 
 ## Haciendo ahora
-- R5 entrenada (src/puntuacion.py). Siguiente: usarla dentro de recommend() como clave de PARAMS (apagada).
+- R5 conectada a recommend() con la clave `usar_modelo` (apagada). Espero la medición de Alex para R6.
 
 ## Terminado
 - R5 regresión logística: `python -m src.puntuacion` (numpy, sin dependencias nuevas; coeficientes en
@@ -79,6 +79,12 @@
   En vivo (`hasta=None`) el archivo es `data/covisitas_todo.json`.
 
 ## Necesito de alguien
+- **Evaluación (Alex):** mide `{"usar_modelo": True}` (R5). Antes hay que crear `data/puntuacion.json` con
+  `python -m src.puntuacion` (~15 s; si no existe, la clave no hace nada). En ese modo los candidatos son los 40
+  primeros de: populares de su categoría, populares de siempre, co-visitas, lo visto y lo ya comprado; el
+  modelo los ordena y NO quita lo ya comprado. Según tu veredicto, sigo con R6 (LightGBM) o no.
+- **Operador (Lester):** si algún día va en vivo `usar_modelo`, en tu máquina hay que ejecutar antes
+  `python -m src.puntuacion` (crea data/puntuacion.json, que no se sube al repo).
 - **Operador (Lester), R4:** campo `tendencias: dict[str, float]` en el `Estado` (product_id -> lift) y que el
   refresco lo rellene con `tendencias.cargar_tendencias(None)` cada 1-2 min (tarda < 1 s). En `construir(hasta)`:
   `tendencias.cargar_tendencias(hasta)`. ranking.py ya lo lee con `getattr`, así que no rompe nada mientras no esté.

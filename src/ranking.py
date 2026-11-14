@@ -21,6 +21,9 @@ import math
 from collections import Counter
 from itertools import chain
 
+import numpy as np
+
+from src import puntuacion
 from src.estado import Estado
 
 NOMBRE = "e-samen-v1"
@@ -68,10 +71,17 @@ Chequeo de Leonardo en vivo (sáb ~17:00): los productos con lift >= 1.3 siguen 
 RELLENO_REORDENADO = 30
 """Con tendencia encendida, cuántos primeros puestos de cada lista de relleno se reordenan."""
 
+CANDIDATOS_POR_FUENTE = 40
+"""R5. Con usar_modelo, cuántos candidatos se toman de cada fuente antes de que el modelo los ordene."""
+
 PARAMS: dict = {"decaimiento": DECAIMIENTO, "revisitas": REVISITAS, "afin_sub": AFIN_SUB,
                 "afin_marca": AFIN_MARCA, "normalizar_fila": NORMALIZAR_FILA,
                 "precio_coherente": PRECIO_COHERENTE, "lambda_precio": LAMBDA_PRECIO,
-                "usar_vecinos": False, "usar_contexto": False, "tendencia": TENDENCIA}
+                "usar_vecinos": False, "usar_contexto": False, "tendencia": TENDENCIA,
+                "usar_modelo": False}
+"""usar_modelo (R5): los 10 los elige la regresión logística de src/puntuacion.py en vez de la suma de puntos.
+Necesita data/puntuacion.json (python -m src.puntuacion); si no existe, se ignora. En este modo NO se quita lo ya
+comprado: el modelo aprendió que haberlo comprado antes SUBE la probabilidad de compra (×1,83). APAGADO."""
 """Parámetros por defecto. Las variantes A/B (src/servicio.py, Operador) pasan otro diccionario con las mismas
 claves: así se prueban variantes en vivo sin tocar este archivo. Cada clave nueva se añade aquí con su valor.
 usar_vecinos / usar_contexto: piezas de Artai (D3, D4). APAGADAS hasta que Evaluación o un A/B digan que suben:
@@ -98,6 +108,27 @@ def _por_tendencia(lista: list[str], lift: dict[str, float], eta: float) -> list
     cabeza = lista[:RELLENO_REORDENADO]
     puntos = {pid: lift.get(pid, 1.0) ** eta / math.log2(pos + 2) for pos, pid in enumerate(cabeza)}
     return sorted(cabeza, key=puntos.__getitem__, reverse=True) + lista[RELLENO_REORDENADO:]
+
+
+def _con_modelo(peticion: dict, estado: Estado, vistos: list[str], puntos: Counter, lift: dict[str, float],
+                eta: float) -> list[str] | None:
+    """R5. Junta candidatos (populares de su categoría, populares de siempre, co-visitas, lo que ha visto y lo que
+    ya compró), los puntúa con la regresión logística y devuelve los 10 mejores. None si no hay modelo."""
+    modelo = puntuacion.modelo_guardado()
+    if modelo is None:
+        return None
+    n = CANDIDATOS_POR_FUENTE
+    ultima_categoria = str(estado.catalogo.get(vistos[-1], {}).get("category", "")) if vistos else ""
+    comprados = estado.comprados.get(str(peticion.get("user_id", "")), set())
+    fuentes = (estado.populares_categoria.get(ultima_categoria, [])[:n], estado.populares[:n],
+               [pid for pid, _ in puntos.most_common(n)], list(reversed(vistos)), sorted(comprados)[:n])
+    candidatos = list(dict.fromkeys(pid for pid in chain(*fuentes) if pid in estado.disponibles))
+    if not candidatos:
+        return []
+    s = puntuacion.puntuar(peticion, candidatos, estado, modelo)
+    if eta > 0 and lift:  # tendencias: puntos × lift^η  ==  puntuación + η·log(lift)
+        s = s + eta * np.log([lift.get(pid, 1.0) for pid in candidatos])
+    return [candidatos[i] for i in np.argsort(-s, kind="stable")[:10]]
 
 
 def recommend(peticion: dict, estado: Estado, params: dict | None = None) -> list[str]:
@@ -169,7 +200,11 @@ def recommend(peticion: dict, estado: Estado, params: dict | None = None) -> lis
                 contados.add(pid)
                 puntos[pid] += p["revisitas"] * (p["decaimiento"] ** k) * tope
 
-    elegidos = [pid for pid, _ in puntos.most_common() if vale(pid)][:10]
+    elegidos = None
+    if p["usar_modelo"]:
+        elegidos = _con_modelo(peticion, estado, vistos, puntos, lift, p["tendencia"])
+    if elegidos is None:
+        elegidos = [pid for pid, _ in puntos.most_common() if vale(pid)][:10]
 
     # 5) Relleno, en este orden: más vendidos de la categoría de lo último que vio (el baseline de las
     #    diapositivas), populares de su tipo de comprador, populares de siempre y cualquiera disponible.

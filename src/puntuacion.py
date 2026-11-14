@@ -139,6 +139,33 @@ def _puestos(n_filas: int) -> np.ndarray:
     return m
 
 
+# ---------------------------------------------------------------- usar el modelo (lo llama ranking.recommend)
+_modelo: dict | None = None
+_modelo_leido = False
+
+
+def modelo_guardado() -> dict | None:
+    """Coeficientes de data/puntuacion.json, leídos UNA vez (la primera llamada). None si no existe el archivo:
+    entonces recommend() sigue sin modelo. Para crearlo: python -m src.puntuacion."""
+    global _modelo, _modelo_leido
+    if not _modelo_leido:
+        _modelo_leido = True
+        try:
+            m = json.loads((DATA / "puntuacion.json").read_text())
+            m["_media"], m["_desv"] = np.asarray(m["media"]), np.asarray(m["desviacion"])
+            m["_coef"] = np.asarray(m["coeficientes"])
+            _modelo = m if m.get("senales") == NOMBRES else None  # señales distintas = archivo viejo: no usar
+        except (OSError, ValueError, KeyError):
+            _modelo = None
+    return _modelo
+
+
+def puntuar(peticion: dict, candidatos: list[str], estado: Estado, modelo: dict) -> np.ndarray:
+    """Puntuación de cada candidato (más alta = más probable que lo compre). Sin puestos: solo el producto.
+    Es la parte de dentro de la sigmoide; para ordenar no hace falta aplicarla."""
+    return (senales(peticion, candidatos, estado) - modelo["_media"]) / modelo["_desv"] @ modelo["_coef"]
+
+
 # ---------------------------------------------------------------- datos
 _SQL = """
 SELECT user_id::String AS user_id, `context.device`::String AS device, recent_views, shown, propensity,

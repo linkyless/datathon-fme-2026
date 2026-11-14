@@ -1,0 +1,26 @@
+# Claves: nunca se suben
+.env
+*.key
+
+# Datos y salidas
+data/
+*.csv
+*.parquet
+*.zip
+models/
+*.pkl
+*.joblib
+*.npy
+logs/
+
+# Entorno y cachés
+.venv/
+venv/
+__pycache__/
+.ipynb_checkpoints/
+.DS_Store
+.opencode/node_modules/
+
+# Personal de cada uno
+CLAUDE.local.md
+.claude/settings.local.json

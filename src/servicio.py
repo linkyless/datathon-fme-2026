@@ -116,11 +116,12 @@ leaderboard da el coste de explorar (EXP1x frente a AP3) y el feedback de EXP1x 
 nuevos y fuera de las listas de mejores."""
 
 VARIANTES_AP4: list[tuple[str, dict]] = [
-    ("-AP3", {"_aprendiz": "ap3"}),                 # 1/3: AP3 tal cual (control)
-    ("-AP4", {"_aprendiz": "ap3", "_bono": 1.2}),   # 1/3: AP3 + bono moderado a lo suyo (ver recomendar_con_bono)
-    ("-AP5", {"_aprendiz": "ap3", "_bono": 3.0}),   # 1/3: bono fuerte: casi "lo suyo primero, ordenado por el modelo"
+    ("-AP3", {"_aprendiz": "ap3"}),                    # 1/4: AP3 tal cual (control)
+    ("-AP4", {"_aprendiz": "ap3", "_bono": 1.2}),      # 1/4: AP3 + bono moderado a lo suyo (ver recomendar_con_bono)
+    ("-AP5", {"_aprendiz": "ap3", "_bono": 3.0}),      # 1/4: bono fuerte: casi "lo suyo primero, ordenado por el modelo"
+    ("-AP6", {"_aprendiz": "ap3", "_niveles": True}),  # 1/4: lista por niveles medidos (ver recomendar_por_niveles)
 ]
-"""A/B/C (`--ap4`): mismos pesos (AP3); -AP4 y -AP5 suben lo suyo con dos fuerzas. Se lee en la API frente a -AP3."""
+"""Prueba a cuatro brazos (`--ap4`): mismos pesos (AP3) y mismos candidatos; cambia el ORDEN. Se lee en la API."""
 MUNDO: "aprendiz.Mundo | None" = None
 MODELOS_APRENDIZ: dict = {}
 """nombre del entreno (None = data/aprendiz.json, "ap3" = data/aprendiz_ap3.json) -> Modelo."""
@@ -145,6 +146,54 @@ def recomendar_con_bono(peticion: dict, mundo, modelo, disponibles: set[str], bo
     suyo = (X[:, i["carrito_hoy"]] + X[:, i["visto_sesion"]] + X[:, i["carrito_antiguo"]]) > 0
     s = X @ modelo.w + bono * suyo
     return [cand[j] for j in np.argsort(-s, kind="stable")[:10]]
+
+
+_RANGO: dict = {}
+
+
+def _rango_en_categoria(modelo, mundo) -> dict[str, int]:
+    """product_id -> puesto de ventas dentro de su categoría (0 = el mejor), con las listas del aprendiz."""
+    listas = modelo.listas(mundo)
+    if _RANGO.get("de") is not listas:
+        _RANGO["de"] = listas
+        _RANGO["rango"] = {p: i for ps in listas["cat"].values() for i, p in enumerate(ps)}
+    return _RANGO["rango"]
+
+
+def recomendar_por_niveles(peticion: dict, mundo, modelo, disponibles: set[str]) -> list[str]:
+    """Lista por NIVELES, ordenados por lo que de verdad vendió cada tipo de producto en el hueco 1 (compras por
+    1.000 enseñados, feedback del sáb, fila de las 23:55 en EXPERIMENTOS). Dentro de cada nivel manda el aprendiz.
+      0. carrito de hoy sin comprar que además es de los 10 más vendidos de su categoría   (13-150)
+      1. visto en esta sesión: primero lo último                                            (16-27)
+      2. resto de carritos de hoy                                                           (11-17)
+      3. carrito antiguo de la categoría que está mirando                                   (11-13)
+      4. carrito antiguo de otra categoría                                                  (4-7)
+      5. sin relación, de los 3 más vendidos de la categoría que mira                       (3-9)
+      6. todo lo demás, en el orden del aprendiz                                            (0-3)
+    Mismos candidatos que `aprendiz.recomendar`; nunca enseña lo ya comprado."""
+    u, vistos, nuevo = aprendiz._leer_peticion(peticion)
+    foto = mundo.foto(u)
+    comprados = foto["comprados"]
+    cand = aprendiz.candidatos(mundo, modelo, foto, vistos, lambda p: p in disponibles and p not in comprados)
+    if len(cand) < 10:
+        return aprendiz.recomendar(peticion, mundo, modelo, disponibles)
+    s = aprendiz.senales(mundo, foto, vistos, nuevo, cand) @ modelo.w
+    rango = _rango_en_categoria(modelo, mundo)
+    cat = mundo.catalogo
+    cat_ult = cat.get(vistos[-1], {}).get("category") if vistos else None
+    en_sesion = set(vistos)
+    nivel = np.empty(len(cand))
+    for j, p in enumerate(cand):
+        misma = cat_ult is not None and cat.get(p, {}).get("category") == cat_ult
+        if p in foto["carrito_hoy"]:
+            nivel[j] = 0 if rango.get(p, 999) < 10 else 2
+        elif p in en_sesion:
+            nivel[j] = 1 if p == vistos[-1] else 1.5
+        elif p in foto["carrito_antiguo"]:
+            nivel[j] = 3 if misma or cat_ult is None else 4
+        else:
+            nivel[j] = 5 if misma and rango.get(p, 999) < 3 else 6
+    return [cand[j] for j in np.lexsort((-s, nivel))[:10]]
 
 
 def preparar_aprendiz(estado: Estado, parar: threading.Event) -> None:
@@ -333,6 +382,8 @@ def respuesta_segura(peticion: dict, estado: Estado, mv: str) -> tuple[dict, boo
                 explorar = bool(params.get("_explorar"))
                 if params.get("_bono"):
                     items = recomendar_con_bono(peticion, MUNDO, modelo, disponibles, params["_bono"])
+                elif params.get("_niveles"):
+                    items = recomendar_por_niveles(peticion, MUNDO, modelo, disponibles)
                 else:
                     items = aprendiz.recomendar(peticion, MUNDO, modelo, disponibles, explorar=explorar)
                 if not errores_respuesta(items, disponibles):
@@ -428,7 +479,7 @@ def main() -> None:
     ap.add_argument("--v2", action="store_true", help="usar VARIANTES_V2 (A/B C / V2 / V3, 1/3 cada uno)")
     ap.add_argument("--ap3", action="store_true", help="usar VARIANTES_AP3 (AP3 frente a AP3 + exploración, 50/50)")
     ap.add_argument("--ap3-solo", action="store_true", help="todo el tráfico a AP3, sin exploración ni control")
-    ap.add_argument("--ap4", action="store_true", help="usar VARIANTES_AP4 (AP3 / bono 1,2 / bono 3,0 a lo suyo, a tercios)")
+    ap.add_argument("--ap4", action="store_true", help="usar VARIANTES_AP4 (AP3 / bono 1,2 / bono 3,0 / niveles, a cuartos)")
     ap.add_argument("--ap", action="store_true", help="usar VARIANTES_AP (C 1/4, aprendiz 3/4)")
     ap.add_argument("--duracion", type=float, default=0, help="segundos hasta pararse solo (0 = nunca)")
     args = ap.parse_args()

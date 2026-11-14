@@ -1,14 +1,13 @@
 # Estado de Lester
 
 - **Rol:** Operador (docs/guias/operador.md)
-- **Actualizado:** sáb 23:45
+- **Actualizado:** dom 00:05
 
 ## Haciendo ahora
-- **EN VIVO desde sáb 23:16: `e-samen-v1-AP3` al 100 %, sin exploración** (`python -m src.servicio --ap3-solo`).
-  AP3 = aprendiz de Alex reentrenado (`data/aprendiz_ap3.json`). La exploración (EXP1/EXP1x) estuvo 21:43-23:16.
-- **Listo, NO en vivo: AP4/AP5 = AP3 + bono a "lo suyo"** (`python -m src.servicio --ap4`: AP3 / bono 1,2 / bono 3,0 a
-  tercios). Por qué: en el mismo hueco lo suyo vende 3-5 veces más que lo sin relación y AP3 deja fuera ~4 productos
-  suyos por petición (fila sáb 23:40 de EXPERIMENTOS). Espera el ok de Lester (persona) para reiniciar.
+- **EN VIVO desde dom ~00:05: prueba a cuartos `-AP3` / `-AP4` / `-AP5` / `-AP6`** (`python -m src.servicio --ap4`).
+  Mismos pesos y candidatos que AP3; cambia el orden: bono 1,2 / bono 3,0 a lo suyo / lista por niveles
+  (`recomendar_con_bono`, `recomendar_por_niveles` en servicio.py). Fila dom 00:05 de EXPERIMENTOS. Se lee en la API.
+- Antes: AP3 al 100 % sin exploración (sáb 23:16-00:05); AP3 frente a exploración (21:43-23:16).
 - Antes, AP2 frente a C (20:47-21:43): AP2 gana (Alex: compras reales 2,03 % frente a 0,83 %, IC [+0,56, +1,87]).
 - Lectura del A/B a las 22:30 (API, 21:29-22:29): AP3 1,75 · EXP1 1,84 · **EXP1x 1,49**. Explorar cuesta ~0,3 puntos
   en las peticiones que exploran (el modelo estimaba 0,08). Como explora 1 de cada 4 peticiones nuestras, el equipo

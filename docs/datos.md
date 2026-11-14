@@ -143,3 +143,44 @@ FROM shop.history_events WHERE ts > now() - INTERVAL 7 DAY GROUP BY v ORDER BY p
 3. Desempate por ingreso: precio mediano por categoría (tabla de arriba) para no sobreponderar caros atípicos.
 4. Stock se mueve (144 out_of_stock / 108 back_in_stock ya): el filtro de disponibilidad tiene que leer
    `catalog_updates`/`is_active` en vivo, no vale el catálogo congelado.
+
+## 6. Recompras: la señal que cambió el filtro de comprados (sáb ~17:45)
+
+Pregunta: ¿las compras del carrusel son de productos que el usuario YA había comprado antes?
+Respuesta medida: **sí, dominan** — con la definición estricta de Evaluación, **el 100 %** de las compras
+del test (3.530 de 3.530) son de un producto que el mismo usuario ya había comprado en `shop.events`
+antes del corte; con la definición amplia (cualquier compra previa en 60 días, sesiones de los últimos
+7 días), **99,0 %** (3.231 de 3.263). El anuncio de los organizadores de las ~17:40 (el modelo oculto
+premia recomprar) confirma lo que esto ya decía: **el filtro "no repetir lo comprado" destruye aciertos
+y tiene que estar APAGADO** (como parámetro, no como regla).
+
+⚠️ Pendiente de reconciliar con Evaluación: su cifra fue 61,6 % (posible diferencia de definición o de
+fuente de `comprados`); las dos consultas están aquí abajo para replicar cualquiera.
+
+```sql
+-- Definición estricta (la de Evaluación): compra del test posterior al corte cuyo (user, producto)
+-- ya aparece como compra en shop.events ANTES del corte. Resultado: 3.530 compras, 100,0 % con previa.
+SELECT count() AS compras_test, countIf(h.u IS NOT NULL) AS con_previa,
+       round(100*countIf(h.u IS NOT NULL)/count(), 1) AS pct_recompra
+FROM (SELECT user_id::String AS u, purchased::String AS p
+      FROM shop.history_sessions
+      WHERE ts >= '2026-11-07' AND purchased::String != '') s
+LEFT JOIN (SELECT user_id::String AS u, product_id::String AS p
+           FROM shop.history_events
+           WHERE event_type::String = 'purchase' AND ts < '2026-11-07'
+           GROUP BY u, p) h
+      ON s.u = h.u AND s.p = h.p;
+
+-- Definición amplia: compras del carrusel de los últimos 7 días cuya misma pareja (user, producto)
+-- ya se compró en cualquier momento anterior de los 60 días. Resultado: 3.263 compras, 99,0 % recompras.
+SELECT count() AS compras, countIf(h.u IS NOT NULL AND h.primero < s.t) AS recompras
+FROM (SELECT user_id::String AS u, purchased::String AS p, ts::DateTime64(3) AS t
+      FROM shop.history_sessions
+      WHERE ts > now() - INTERVAL 7 DAY AND purchased::String != '') s
+LEFT JOIN (SELECT user_id::String AS u, product_id::String AS p, min(ts::DateTime64(3)) AS primero
+           FROM shop.history_events WHERE event_type::String = 'purchase' GROUP BY u, p) h
+      ON s.u = h.u AND s.p = h.p;
+```
+
+Este indicador vive en el panel Tukey (panel "Recompras") para que la decisión del filtro no se revierta
+sin datos.

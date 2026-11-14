@@ -96,7 +96,19 @@ PANELS_SQL: dict[str, str] = {
               ON v2.pid = c.pid
         GROUP BY sub ORDER BY ratio DESC LIMIT 12
     """,
-    # 6) ¿Cómo evoluciona la tienda? (catalog_updates acumulados)
+    # 6) ¿Recomprar es lo normal? (compras del carrusel de los últimos 7 días que son de un
+    #    producto que el usuario ya había comprado antes en los eventos de los últimos 60 días)
+    "recompras": """
+        SELECT count() AS compras, countIf(h.u IS NOT NULL AND h.primero < s.t) AS recompras
+        FROM (SELECT user_id::String AS u, purchased::String AS p, ts::DateTime64(3) AS t
+              FROM shop.history_sessions
+              WHERE ts > now() - INTERVAL 7 DAY AND purchased::String != '') s
+        LEFT JOIN (SELECT user_id::String AS u, product_id::String AS p,
+                          min(ts::DateTime64(3)) AS primero
+                   FROM shop.history_events WHERE event_type::String = 'purchase' GROUP BY u, p) h
+              ON s.u = h.u AND s.p = h.p
+    """,
+    # 7) ¿Cómo evoluciona la tienda? (catalog_updates acumulados)
     "catalogo": """
         SELECT change::String tipo, count() n
         FROM shop.catalog_updates
@@ -125,6 +137,7 @@ DECISIONES = {
     "frio": "Si crece el mundo frio, sube la prioridad de populares por contexto y de productos nuevos embebidos.",
     "frio_conversion": "Decide si al frio le servimos populares por contexto (con conversion propia) o el ranking general.",
     "tendencias": "Subcategorías con ratio > 1: candidatas a entrada del ranker por tendencia y a exploracion (slots 8-10).",
+    "recompras": "Recomprar es lo normal (y el modelo oculto lo premia): el filtro de 'no repetir lo comprado' debe estar APAGADO; medirlo aquí evita que vuelva a encenderse sin datos.",
     "catalogo": "Cuánto se mueve la tienda: cadencia de refresco del catálogo y de re-embebido de productos nuevos.",
 }
 
@@ -260,6 +273,11 @@ def _regenerar() -> None:
         filas_conv.append(fila)
     series_conv = [{"y": f"pc{i}", "color": f"p{(i % 4) + 1}", "nombre": v} for i, v in enumerate(top)]
 
+    rec = datos["recompras"][0] if datos["recompras"] else None
+    pct_rec = round(100 * rec["recompras"] / rec["compras"], 1) if rec else None
+    kpis_rec = [(f"{pct_rec} %", "% de compras que son RECOMPRA"),
+                (rec["compras"], "compras del carrusel en 7 días")] if rec else []
+
     def _pct(rs: list[dict], campo: str) -> float | None:
         n = sum(r["n"] for r in rs)
         return round(sum(r[campo] * r["n"] for r in rs) / n, 2) if n else None
@@ -304,6 +322,11 @@ def _regenerar() -> None:
          "opts": {"x": "t", "dec": 1},
          "leyenda": "% de peticiones con is_new_user=true · % con recent_views vacío",
          "decision": DECISIONES["frio"], "rows": datos["frio"]},
+        {"id": "recompras", "tipo": "kpi", "titulo": "Recompras: el comprador repite producto",
+         "pregunta": "¿Cuántas compras del carrusel son de algo que el usuario YA había comprado? (7 días)",
+         "kpis": kpis_rec,
+         "leyenda": "compras del carrusel (history_sessions) de un producto que el mismo usuario ya compró antes en shop.events (60 días)",
+         "decision": DECISIONES["recompras"]},
         {"id": "frio_conv", "tipo": "kpi", "titulo": "Conversión frío vs cálido (3 h)",
          "pregunta": "¿Al frío hay que servirle otra cosa? (feedback ⋈ requests por request_id)",
          "kpis": [("frío: " + str(frio.get("frio", {}).get("pct_compra", "—")) + " %", "% compras frío"),

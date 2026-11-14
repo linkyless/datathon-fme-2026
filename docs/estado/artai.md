@@ -1,9 +1,10 @@
 # Estado de Artai
 
 - **Rol:** Datos y relato (docs/guias/datos.md)
-- **Actualizado:** sáb ~16:10
+- **Actualizado:** sáb ~18:00
 
 ## Haciendo ahora
+- **Panel de RECOMPRAS añadido a Tukey + sección 6 en docs/datos.md (sáb ~18:00)**: con la definición estricta de Evaluación, el **100 %** de las compras del test (3.530/3.530) son de un producto ya comprado antes por el mismo usuario (con la definición amplia, 99,0 %). La decisión queda blindada con número: `filtrar_comprados` APAGADO. ⚠️ Divergencia con la cifra de Alex (61,6 %) — reconciliar definiciones con él (consultas replicables en docs/datos.md §6).
 - **Revisión de bugs de todo `src/` (sáb ~17:15) y arreglos aplicados** (pedidos por Artai; commit de hoy):
   1. `embeddings.py` (mío): los 429 ya no reintentan para siempre — tras 5 intentos suelta excepción y el servicio lo reintenta en 60 s. Antes, una saturación de HelmCode congelaba el refresco de TODAS las piezas pesadas.
   2. `covisitas.py` (Leonardo): el cache incluye FIRMA de parámetros (pesos, vecinos, exponente) en el nombre — antes, cambiar un peso dejaba el servicio leyendo co-visitas viejas sin aviso.

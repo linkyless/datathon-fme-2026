@@ -56,11 +56,12 @@ HILOS_ENVIO = 3
 _CANDADO = threading.Lock()
 
 _V0 = {"_sin_covisitas": True, "_sin_comprados": True}
+_CF = {**_V0, "_filtrar_comprados": True}
 VARIANTES: list[tuple[str, dict]] = [
-    ("-C", _V0),                                                          # v0: populares de su categoría
-    ("-CF", {**_V0, "_filtrar_comprados": True}),                         # v0 sin lo que ya compró
-    ("-MF", {"usar_modelo": True, "_filtrar_comprados": True}),           # R5 sin lo que ya compró
-    ("-MTF", {"usar_modelo": True, "tendencia": 0.5, "_filtrar_comprados": True}),  # R5 + tendencias, ídem
+    ("-C", _V0),     # control (1/4): v0, populares de su categoría
+    ("-CF", _CF),    # 3/4: v0 sin lo que el comprador ya compró
+    ("-CF", _CF),
+    ("-CF", _CF),
 ]
 """Reparto A/B (tarea O6). Cada comprador cae SIEMPRE en la misma variante: hash(user_id) % len(VARIANTES).
 Cada variante = (sufijo del nombre, params para ranking.recommend). Ejemplo para probar re-visitas:
@@ -73,7 +74,8 @@ A/B 17:06-17:20: C vs E (re-visitas) -> E por debajo (0,74 % vs 0,97 %, 458 pet.
 A/B 17:17-17:28: C, T, M, MT -> M y MT hundidos: ponían lo YA COMPRADO arriba (61 % de los 1.º) y los organizadores
 confirman que en vivo no hay recompras.
 A/B actual (sáb 17:30): C · CF · MF · MTF. "_filtrar_comprados" quita de los disponibles de ESE comprador lo que ya compró
-(sirve igual para las reglas y para el modelo, que si no lo pondría arriba)."""
+(sirve igual para las reglas y para el modelo, que si no lo pondría arriba).
+Desde sáb 17:36: CF 3/4 (arrancó 1,58 % vs C 1,00 %, 205 pet.) y C 1/4 de control. MF/MTF fuera hasta reentrenar R5."""
 
 
 def variante(peticion: dict) -> tuple[str, dict]:

@@ -24,6 +24,7 @@ import queue
 import subprocess
 import threading
 import time
+import zlib
 from pathlib import Path
 
 from src import catalogo, coldstart, covisitas, ranking, usuarios
@@ -52,6 +53,20 @@ LOG = Path(__file__).resolve().parent.parent / "logs" / "servicio.log"
 HILOS_ENVIO = 3
 """Trabajadores de envío en paralelo (medido: un insert tarda 0,3-1 s)."""
 _CANDADO = threading.Lock()
+
+VARIANTES: list[tuple[str, dict]] = [("", {})]
+"""Reparto A/B (tarea O6). Cada comprador cae SIEMPRE en la misma variante: hash(user_id) % len(VARIANTES).
+Cada variante = (sufijo del nombre, params para ranking.recommend). Ejemplo para probar re-visitas:
+    VARIANTES = [("-A", {}), ("-B", {"revisitas": True})]   ->  e-samen-v2-A y e-samen-v2-B en el leaderboard
+Con una sola variante ("", {}) todo el mundo recibe lo mismo y el nombre no lleva sufijo."""
+
+
+def variante(peticion: dict) -> tuple[str, dict]:
+    """Elige la variante del comprador. zlib.crc32 da el mismo número en cada reinicio (hash() de Python no)."""
+    if len(VARIANTES) == 1:
+        return VARIANTES[0]
+    clave = str(peticion.get("user_id") or peticion.get("request_id", ""))
+    return VARIANTES[zlib.crc32(clave.encode()) % len(VARIANTES)]
 
 
 def log(msg: str) -> None:
@@ -118,6 +133,10 @@ def refrescar(estado: Estado, parar: threading.Event) -> None:
             if toca("populares", 600):
                 estado.populares = catalogo.cargar_populares()
                 estado.populares_categoria = por_categoria(estado.catalogo, estado.populares)
+            if toca("nuevos", 300) and hasattr(coldstart, "embeber_nuevos"):  # se activa cuando Artai suba D4
+                n = coldstart.embeber_nuevos()
+                log(f"embeber_nuevos: {n}")
+                ultimo["pesadas"] = -1e9  # recargar vecinos enseguida con los nuevos embeddings
             if toca("pesadas", 1800):  # co-visitas, compras, cold start: tardan, pero no bloquean nada
                 t = time.monotonic()
                 estado.covisitas = covisitas.cargar_covisitas(None)
@@ -136,8 +155,10 @@ def refrescar(estado: Estado, parar: threading.Event) -> None:
 def respuesta_segura(peticion: dict, estado: Estado, mv: str) -> tuple[dict, bool]:
     """Devuelve (submission, fue_sustituida). Si recommend() falla o es inválida, populares disponibles."""
     disponibles = estado.disponibles  # una sola lectura: misma versión para recomendar y para validar
+    sufijo, params = variante(peticion)
+    mv = mv + sufijo
     try:
-        items = ranking.recommend(peticion, estado)
+        items = ranking.recommend(peticion, estado, params)
         if not errores_respuesta(items, disponibles):
             return {"request_id": peticion["request_id"], "items": items, "model_version": mv}, False
     except Exception as e:

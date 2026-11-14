@@ -43,6 +43,11 @@ class Estado:
     """(device, region) -> más vendidos para ese tipo de comprador. Para usuarios nuevos."""
     vecinos: dict[str, list[str]] = field(default_factory=dict)
     """product_id -> productos con descripción parecida (embeddings). Para productos nuevos."""
+    perfiles_comprador: dict[str, dict] = field(default_factory=dict)
+    """user_id -> {"categorias", "subcategorias", "marcas", "precio_mediano", "compras"}: perfil de R6
+    (lo rellena coldstart.cargar_perfiles desde team_29.scratch; construir_perfiles lo sube)."""
+    perfiles_producto: dict[str, dict] = field(default_factory=dict)
+    """product_id -> {"ensenado", "comprado", "tasa_ips"}: tasa de compra corregida por propensity (R6)."""
 
 
 def por_categoria(cat: dict[str, dict], populares: list[str]) -> dict[str, list[str]]:
@@ -56,9 +61,18 @@ def por_categoria(cat: dict[str, dict], populares: list[str]) -> dict[str, list[
 
 
 def construir(hasta: str | None = None) -> Estado:
-    """Calcula el Estado completo. Offline: hasta='YYYY-MM-DD'. En vivo: hasta=None."""
+    """Calcula el Estado completo. Offline: hasta='YYYY-MM-DD'. En vivo: hasta=None.
+
+    Los perfiles de R6 vienen de team_29.scratch; si el corte no está construido ahí,
+    ejecuta antes `python -m src.coldstart` (en vivo) o `construir_perfiles(hasta)` (offline).
+    """
     cat = catalogo.cargar_catalogo(hasta)
     pop = catalogo.cargar_populares(hasta)
+    perfiles_comprador, perfiles_producto = coldstart.cargar_perfiles(hasta)
+    if not perfiles_comprador and not perfiles_producto:
+        # este corte no está construido en scratch: se construye AHORA con el mismo corte
+        # (respeta `hasta`, no mira el futuro) y se recarga; solo pasa la primera vez.
+        perfiles_comprador, perfiles_producto = coldstart.construir_perfiles(hasta)
     return Estado(
         catalogo=cat,
         disponibles=catalogo.disponibles(cat),
@@ -69,4 +83,6 @@ def construir(hasta: str | None = None) -> Estado:
         tendencias=tendencias.cargar_tendencias(hasta),
         populares_contexto=coldstart.cargar_populares_contexto(hasta),
         vecinos=coldstart.cargar_vecinos(hasta),
+        perfiles_comprador=perfiles_comprador,
+        perfiles_producto=perfiles_producto,
     )

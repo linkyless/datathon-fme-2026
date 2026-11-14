@@ -5,6 +5,7 @@ D3 y D4 de docs/guias/datos.md. Los embeddings en sí los calcula src/embeddings
 from __future__ import annotations
 
 import base64
+import json
 import time
 
 import numpy as np
@@ -221,6 +222,186 @@ def cargar_covisitas_heredadas(
     return heredadas
 
 
+# ---------- Perfiles para R6 (pedido de Leonardo, sáb ~18:50) ----------
+# (1) perfil_comprador: top 3 categorías/subcategorías/marcas y precio mediano por comprador
+#     (history_events + shop.events en vivo). (2) perfil_producto: veces enseñado, veces comprado
+#     y tasa de compra corregida por propensity, desde history_sessions con arrayJoin.
+# Se guardan en team_29.scratch con sello de versión (`gen`) y corte (`hasta`), y se leen con
+# cargar_perfiles(hasta), que solo devuelve filas de su mismo corte (respetar `hasta` = no mirar futuro).
+
+PERFIL_COMPRADOR = "perfil_comprador_v2"
+PERFIL_PRODUCTO = "perfil_producto_v2"
+# v1 de estos tipos quedó CORRUPTA en scratch (top-3 reducido a caracteres, sáb ~18:00) y no se puede
+# borrar sin permiso admin: al subir a v2, el cargador ignora automáticamente todas las filas v1.
+PERFIL_GEN_MIN = 1800  # segundos: no reconstruir si lo último en scratch es más reciente
+
+
+def _union_en_vivo(hasta: str | None) -> str:
+    """shop.events solo cuenta EN VIVO (hasta=None): con corte, serían datos del futuro.
+
+    Los eventos no traen categoría: la del catálogo se une aquí también.
+    """
+    if hasta:
+        return ""
+    return ("UNION ALL SELECT e2.user_id::String AS u, c2.c AS c, c2.s AS s, c2.b AS b, "
+            "e2.price_eur::Float64 AS pr "
+            "FROM shop.events e2 "
+            "INNER JOIN (SELECT product_id::String pid, category::String c, "
+            "subcategory::String s, brand::String b FROM shop.catalog) c2 "
+            "ON e2.product_id::String = c2.pid "
+            "WHERE e2.event_type::String = 'purchase'")
+
+
+def _construir_perfil_comprador(hasta: str | None) -> dict[str, dict]:
+    """user_id -> {"categorias": [3], "subcategorias": [3], "marcas": [3], "precio_mediano": €, "compras": n}.
+
+    Top-3 por dimensión con LIMIT 3 BY (probado; los trucos con groupArray de tuplas llegan
+    achatados por el camino Dynamic y estropean el perfil).
+    """
+    filtro = f" WHERE e.event_type::String = 'purchase' AND e.ts::DateTime64(3) < '{hasta}'" if hasta \
+        else " WHERE e.event_type::String = 'purchase'"
+    union = _union_en_vivo(hasta)
+    dim_map = (("c", "categorias"), ("s", "subcategorias"), ("b", "marcas"))
+    top: dict[str, dict] = {}
+    for dim, clave in dim_map:
+        sql = f"""
+        SELECT u, v, n FROM (
+          SELECT u, {dim} AS v, count() AS n FROM (
+            SELECT e.user_id::String AS u, c.c AS c, c.s AS s, c.b AS b, e.price_eur::Float64 AS pr
+            FROM shop.history_events e
+            INNER JOIN (SELECT product_id::String pid, category::String c,
+                               subcategory::String s, brand::String b FROM shop.catalog) c
+                      ON e.product_id::String = c.pid
+            {filtro}
+            {union}
+          ) GROUP BY u, v ORDER BY n DESC
+        ) LIMIT 3 BY u"""
+        for f in query(sql, timeout=600):
+            d = top.setdefault(f["u"], {"categorias": [], "subcategorias": [], "marcas": [],
+                                        "precio_mediano": 0.0, "compras": 0})
+            d[clave].append(str(f["v"]))  # las filas llegan ya de más a menos compras por comprador
+    filas_med = query(f"""
+        SELECT u, round(quantile(0.5)(pr), 2) AS med, count() AS compras FROM (
+          SELECT e.user_id::String AS u, c.c AS c, c.s AS s, c.b AS b, e.price_eur::Float64 AS pr
+          FROM shop.history_events e
+          INNER JOIN (SELECT product_id::String pid, category::String c,
+                             subcategory::String s, brand::String b FROM shop.catalog) c
+                    ON e.product_id::String = c.pid
+          {filtro}
+          {union}
+        ) GROUP BY u""", timeout=600)
+    for f in filas_med:
+        d = top.setdefault(f["u"], {"categorias": [], "subcategorias": [], "marcas": [],
+                                    "precio_mediano": 0.0, "compras": 0})
+        d["precio_mediano"] = float(f["med"] or 0)
+        d["compras"] = int(f["compras"])
+    return top
+
+
+def _construir_perfil_producto(hasta: str | None) -> dict[str, dict]:
+    """product_id -> {"ensenado": n, "comprado": n, "tasa_ips": tasa corregida por propensity}."""
+    filtro = f" WHERE ts::DateTime64(3) < '{hasta}'" if hasta else ""
+    sql = f"""
+    SELECT p, count() AS ensenado, countIf(p = pc) AS comprado,
+           round(if(sum(w) > 0, sum(wc) / sum(w), 0), 4) AS tasa_ips
+    FROM (
+      SELECT z.1 AS p, purchased::String AS pc,
+             if(z.2::Float64 > 0, 1.0 / z.2::Float64, 0) AS w,
+             if(z.2::Float64 > 0 AND z.1 = pc, 1.0 / z.2::Float64, 0) AS wc
+      FROM (SELECT arrayJoin(arrayZip(shown, propensity)) AS z, purchased::String AS purchased
+            FROM shop.history_sessions{filtro})
+    )
+    GROUP BY p"""
+    return {f["p"]: {"ensenado": int(f["ensenado"]), "comprado": int(f["comprado"]),
+                     "tasa_ips": float(f["tasa_ips"])} for f in query(sql, timeout=600)}
+
+
+def construir_perfiles(hasta: str | None = None, forzar: bool = False) -> tuple[dict, dict]:
+    """Calcula los perfiles de R6, los sube a team_29.scratch y los devuelve.
+
+    Cada fila lleva `gen` (sello de versión) y `hasta` (el corte: "LIVE" si es None): el
+    cargador solo lee filas de su mismo corte. Si lo último subido es de hace
+    < PERFIL_GEN_MIN segundos, no recalcula (scratch no crece sin control) salvo `forzar=True`.
+    """
+    h = hasta or "LIVE"
+    try:
+        ultimo = query(f"SELECT max(gen) AS g FROM team_29.scratch "
+                       f"WHERE tipo = '{PERFIL_COMPRADOR}' AND hasta::String = '{h}'")[0]["g"] or 0
+    except RuntimeError:  # scratch aún sin estas columnas (primera vez)
+        ultimo = 0
+    if not forzar and time.time() - ultimo < PERFIL_GEN_MIN:
+        return cargar_perfiles(hasta)
+
+    gen = int(time.time())
+    comprador = _construir_perfil_comprador(hasta)
+    producto = _construir_perfil_producto(hasta)
+    filas = [{"tipo": PERFIL_COMPRADOR, "hasta": h, "gen": gen, "user_id": u, **datos}
+             for u, datos in comprador.items()]
+    filas += [{"tipo": PERFIL_PRODUCTO, "hasta": h, "gen": gen, "product_id": p, **datos}
+              for p, datos in producto.items()]
+    for i in range(0, len(filas), 500):
+        insertar("scratch", filas[i : i + 500])
+    print(f"perfiles subidos a scratch: {len(comprador)} compradores + {len(producto)} productos (gen {gen})")
+    return comprador, producto
+
+
+def _por_gen(filas: list[dict], clave: str) -> dict[str, dict]:
+    """De las filas de scratch, se queda con la de mayor `gen` por clave (la más reciente)."""
+    mejor: dict[str, dict] = {}
+    for f in filas:
+        k = str(f[clave])
+        if k not in mejor or int(f.get("gen") or 0) > int(mejor[k].get("gen") or 0):
+            mejor[k] = f
+    return mejor
+
+
+def _como_lista(v) -> list[str]:
+    """Las columnas Dynamic a veces traen la lista tal cual y a veces texto JSON."""
+    if isinstance(v, list):
+        return [str(x) for x in v]
+    if isinstance(v, str) and v.startswith("["):
+        return [str(x) for x in json.loads(v)]
+    return []
+
+
+def cargar_perfiles(hasta: str | None = None) -> tuple[dict, dict]:
+    """Lee de team_29.scratch los perfiles de R6 de ESTE corte.
+
+    Devuelve (perfil_comprador, perfil_producto):
+    - user_id -> {"categorias": [3], "subcategorias": [3], "marcas": [3], "precio_mediano": €, "compras": n}
+    - product_id -> {"ensenado": n, "comprado": n, "tasa_ips": tasa corregida}
+    Si aún no se han construido (python -m src.coldstart los construye, o el servicio), devuelve ({}, {}).
+    """
+    h = hasta or "LIVE"  # "" en Dynamic se comportaba mal en el WHERE: marcador explícito
+    try:
+        filas = query(f"SELECT user_id::String AS user_id, gen, categorias, subcategorias, marcas, "
+                      f"precio_mediano, compras FROM team_29.scratch "
+                      f"WHERE tipo = '{PERFIL_COMPRADOR}' AND hasta::String = '{h}'")
+    except RuntimeError:  # primera vez: scratch aún no tiene estas columnas
+        filas = []
+    comprador = {u: {"categorias": _como_lista(f.get("categorias")),
+                     "subcategorias": _como_lista(f.get("subcategorias")),
+                     "marcas": _como_lista(f.get("marcas")),
+                     "precio_mediano": float(f.get("precio_mediano") or 0),
+                     "compras": int(f.get("compras") or 0), "gen": int(f.get("gen") or 0)}
+                 for u, f in _por_gen(filas, "user_id").items()}
+    try:
+        filas_p = query(f"SELECT product_id::String AS product_id, gen, ensenado, comprado, tasa_ips "
+                        f"FROM team_29.scratch WHERE tipo = '{PERFIL_PRODUCTO}' AND hasta::String = '{h}'")
+    except RuntimeError:
+        filas_p = []
+    producto = {p: {"ensenado": int(f.get("ensenado") or 0), "comprado": int(f.get("comprado") or 0),
+                    "tasa_ips": float(f.get("tasa_ips") or 0), "gen": int(f.get("gen") or 0)}
+                for p, f in _por_gen(filas_p, "product_id").items()}
+    return comprador, producto
+
+
+def main() -> None:
+    """python -m src.coldstart: construye y sube los perfiles de R6 (en vivo, hasta=None)."""
+    comprador, producto = construir_perfiles(None, forzar=True)
+    print(f"perfil comprador: {len(comprador)} | perfil producto: {len(producto)}")
+
+
 def embeber_nuevos() -> int:
     """Embebe los 'new_product' de catalog_updates que aún no están en scratch y los sube.
 
@@ -269,3 +450,7 @@ def embeber_nuevos() -> int:
         ],
     )
     return len(filas_out)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,10 +1,10 @@
 # Estado de Alex
 
 - **Rol:** Evaluación (docs/guias/evaluacion.md)
-- **Actualizado:** sáb 17:50
+- **Actualizado:** sáb 18:10
 
 ## Haciendo ahora
-- Leer el A/B en vivo con el panel (cuando lleve ≥ 1 h). Re-medir cuando Leonardo añada `filtrar_comprados`.
+- Leer el A/B en vivo con el panel (C frente a CF, T, M, MT, MF, MTF).
 
 ## Terminado
 - IPS10 en evaluar.py (IPS en las 10 posiciones, tope 50, con bootstrap) y lectura del A/B por minutos comunes:
@@ -25,22 +25,25 @@ Lo medido es si cada pieza sirve como REGLA para ordenar la lista entera. Un ár
 quitar variables con información.
 | Señal (variable por producto candidato) | Qué hemos medido | Para el árbol |
 |---|---|---|
-| **Ya comprado por este usuario** | 61,6 % de las compras del test son recompras; filtrarlas hunde purchase_hit 0.86 → 0.32; organizadores confirman que el modelo premia recomprar | **La más importante. Imprescindible** |
+| Ya comprado por este usuario | En el HISTÓRICO, 61,6 % de las compras del test son recompras y filtrarlas hunde purchase_hit offline 0.86 → 0.32. Pero el organizador avisa: "trust the feedback loop more than the docs, and the docs more than a CSV" → la recompra del histórico es un artefacto del CSV. En vivo, CF (filtro) frente a C: 3 vs 3 compras en 10 min, sin diferencia significativa | **No significativa (confirmado en el stand). NO usarla para entrenar**: en el histórico domina y el árbol aprendería el artefacto |
 | Popular en la categoría de lo último visto | La v0 (solo esto) gana a todo, offline y en vivo (A/B C) | **Imprescindible** |
 | Popularidad global | Baseline del starter: 0.54 purchase_hit (v0: 0.86) | Útil (base) |
 | Ya visto en esta sesión (re-visita) | Cuando se enseñaba, 1,96 compras/100 huecos vs 0,12 (Leonardo). Como regla: −4 % IPS10 offline, igual en vivo | Útil como variable, no como regla |
 | Puntuación de co-visita | Como regla pierde (clics −41 % en vivo, real) | Dudosa: dejarla, pesará poco si no sirve |
 | Contexto (device, región) | Tras la mezcla de Artai no cambia nada; antes, efecto no significativo | Probablemente poco útil |
 | Vecinos por descripción | El historial no tiene productos nuevos: no medible offline | Sin datos para entrenar; útil solo en vivo (frío) |
-| Tendencia (última media hora) | A/B T: 12 min, no significativo | No medido |
+| Tendencia (última media hora) | A/B T frente a C (13 min): compras 7 vs 8, clics −13 %, nada significativo | Sin datos suficientes |
+| (Modelos M / MT / MTF, regresión logística) | En vivo por debajo de C en clics (MT −52 %, real); compras sin diferencia significativa (4-5 por brazo) | Aún no ganan a la v0 |
 | Precio | No medido | No medido |
 
 **Ojo al entrenar:** el historial solo tiene etiquetas de lo que el carrusel antiguo enseñó (sesgado a lo popular).
 Ponderar por 1/propensity (con tope, p. ej. 50), como hace la R5, y validar con `python -m src.evaluar` (IPS10 + bootstrap).
 
 ## Descubierto (cosas que los demás deben saber)
-- **La gente recompra**: el 61,6 % de las compras del carrusel en el test (876 de 1422) son productos que ese
-  usuario ya había comprado antes. Choca con la pista oficial ("quien compró no lo quiere otra vez"): preguntar en el stand.
+- **Recompra: el histórico engaña.** El 61,6 % de las compras del test son de algo ya comprado antes, pero los
+  organizadores confirman que en vivo la recompra NO es significativa ("trust the feedback loop more than the docs,
+  and the docs more than a CSV"). Las métricas offline que dependen de recompras (purchase_hit con o sin filtro)
+  están infladas por ese artefacto: decidir con el A/B en vivo.
 - El segmento frío del test solo tiene 35 compras: el purchase_hit frío es ruido; mirar el hit_rate frío.
 - **En `feedback`, "late" no aparece nunca**: lo que enviamos tarde sale como `fallback_reason = 'missing'`
   aunque esté en `submissions`. El panel lo cuenta como "tarde".
@@ -52,8 +55,7 @@ Ponderar por 1/propensity (con tope, p. ej. 50), como hace la R5, y validar con 
   lo que enseñó. Por eso baseline_categoria saca 0.76 de hit_rate pero un SNIPS más bajo que baseline_starter.
 
 ## Necesito de alguien
-- **Leonardo**: probar lo contrario del filtro: EMPUJAR lo ya comprado por el usuario (parámetro en `PARAMS`);
-  lo mido offline en minutos. Para el gradient boosting, ver la tabla de señales de arriba.
-- **Lester**: el brazo A del A/B (v1 sin co-visitas) NO es la v0: lleva el filtro de comprados. Propuesta:
-  A = v0 real (sin co-visitas ni filtro), B = co-visitas sin filtro. Y fiabilidad: 80 % servido a las 16:30
-  (392 tarde, p95 2,7 s): `python -m src.panel --horas 1`.
+- **Leonardo**: para el gradient boosting, ver la tabla de señales de arriba. Sobre todo: NO entrenar con "ya
+  comprado" (artefacto del histórico) y ponderar por 1/propensity.
+- **Artai**: el commit `30fb29c` y `docs/presentacion.md` dicen que el organizador "confirma que el modelo premia
+  recomprar". Es al revés: confirma que NO es significativa. Corrígelo en la presentación (el archivo es tuyo).

@@ -175,7 +175,7 @@ def main() -> None:
     args = ap.parse_args()
 
     mv = version_modelo()
-    log(f"arrancando {mv} (commit {commit_actual()}) | equipo {TEAM} | {'SIN ENVÍO (prueba)' if args.sin_envio else 'EN VIVO'}")
+    log(f"arrancando {mv} | equipo {TEAM} | {'SIN ENVÍO (prueba)' if args.sin_envio else 'EN VIVO'}")
     estado = estado_inicial()
     log(f"estado inicial listo: {len(estado.catalogo)} productos, {len(estado.disponibles)} disponibles")
     parar = threading.Event()

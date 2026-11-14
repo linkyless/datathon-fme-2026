@@ -7,6 +7,7 @@ Una fila por medición. Solo números que salgan de código ejecutado. `model_ve
 |---|---|---|
 | baseline | starter oficial: más vendidos de siempre en stock | (starter) |
 | e-samen-v0 | más vendidos de la categoría de lo último visto; sin vistas, los más vendidos de siempre | 10ea502 |
+| e-samen-v1 | v0 + co-visitas (pesos vista 1, carrito 6, compra 3; sin dividir por popularidad; 20 vecinos) + no repetir productos ya comprados | 6ba57f7 |
 
 ## Mediciones
 
@@ -22,3 +23,9 @@ Una fila por medición. Solo números que salgan de código ejecutado. `model_ve
 | sáb 15:43 | Alex | e-samen-v0 +contexto | ídem, `usar_contexto=True` | 0.7630 | 0.0238 | 21480 | | **NO APTO**. purchase_hit@10 0.8594. Frío (20272): hit 0.3605→0.3256, purchase 0.6000→0.4571, SNIPS 0.0057→0.0063 con 650 matches (ruido) |
 | sáb 15:43 | Alex | e-samen-v0 +contexto +vecinos | ídem, los dos encendidos | 0.0486 | 0.0009 | 927 | | **NO APTO**. purchase_hit@10 0.0464. Frío igual que +contexto |
 | sáb 16:50 | Lester | e-samen-v1-A / e-samen-v1-B | A/B EN VIVO por user_id (50/50). A = v1 sin co-visitas (control ≈ v0). B = v1 completa. Motivo: offline purchase_hit no puede premiar lo que el carrusel antiguo no enseñaba (100 % de las compras del test están en `shown`) | | | | pendiente | Comparar conversión A vs B con team_29.feedback tras ≥ 1 h |
+| sáb 16:35 | Alex | e-samen-v1 | offline, corte 2026-11-07, mismo test de 100k (1422 compras). Estado con co-visitas, comprados, contexto y vecinos | 0.1733 | 0.0069 | 6313 | | **NO APTO**. purchase_hit@10 0.1554 (v0: 0.8629). Frío: hit 0.2267, purchase 0.2286 (v0: 0.3605 / 0.6000) |
+| sáb 16:35 | Alex | e-samen-v1 sin comprados | ídem, `estado.comprados` vacío (solo co-visitas) | 0.3291 | 0.0146 | 7045 | | purchase_hit@10 0.4037. Frío igual que v0. Peor que v0 offline, pero el offline premia parecerse al carrusel antiguo: decidir con A/B |
+| sáb 16:35 | Alex | e-samen-v1 sin covisitas | ídem, `estado.covisitas` vacío (v0 + filtro de comprados) = brazo A del A/B en vivo | 0.4148 | 0.0124 | 19638 | | purchase_hit@10 0.3242. **El filtro de comprados es lo que más hunde**: el 61,6 % de las compras del test (876/1422) son productos que ese usuario ya había comprado antes del corte |
+| sáb 16:35 | Alex | e-samen-v1 +revisitas 0.3 | ídem, `{"revisitas": 0.3}` (candidata a v2) | 0.1800 | 0.0061 | 6281 | | purchase_hit@10 0.1624 (v1: 0.1554). Mejora mínima y SNIPS algo peor: sin señal clara |
+| sáb 16:35 | Alex | e-samen-v1 +contexto / +vecinos | ídem, interruptores de Artai | 0.1733 | 0.0069 | 6313 | | Idéntico a v1. Contexto: tras su arreglo (populares generales delante) solo cambia 2 de 500 listas frías. Vecinos: el test no tiene productos nuevos (los 5000 tienen co-visitas), no medible offline |
+| sáb 16:35 | Alex | (corrección) | — | | | | | El "contexto empeora a los fríos" de las 15:43 se basaba en solo 35 compras del segmento frío (21 vs 16): era ruido |

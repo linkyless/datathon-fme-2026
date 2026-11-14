@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import pickle
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import replace
 from datetime import date, timedelta
 from itertools import product
 from pathlib import Path
@@ -75,6 +76,13 @@ def cargar_estado(corte: str, recalcular: bool) -> Estado:
 INTERRUPTORES = ["usar_contexto", "usar_vecinos"]
 """Interruptores de ranking.PARAMS que se prueban en todas sus combinaciones (encendido/apagado)."""
 
+VARIANTES = {  # nombre -> (params, piezas del Estado que se vacían)
+    "actual +revisitas0.3": ({"revisitas": 0.3}, []),  # candidata a v2 (Leonardo)
+    "actual sin covisitas": ({}, ["covisitas"]),        # cuánto aporta cada pieza por separado
+    "actual sin comprados": ({}, ["comprados"]),
+}
+"""Variantes sueltas además de las combinaciones de INTERRUPTORES. Para medir otra idea, añade una línea aquí."""
+
 
 def politicas(estado: Estado) -> dict[str, tuple[Estado, dict]]:
     """Los "alumnos": (libreta, interruptores). Todos usan ranking.recommend.
@@ -91,6 +99,9 @@ def politicas(estado: Estado) -> dict[str, tuple[Estado, dict]]:
         params = dict(zip(INTERRUPTORES, combinacion))
         encendidos = [i.removeprefix("usar_") for i, on in params.items() if on]
         salida["actual" + "".join(f" +{e}" for e in encendidos)] = (estado, params)
+    for nombre, (params, vaciar) in VARIANTES.items():
+        salida[nombre] = (replace(estado, **{pieza: type(getattr(estado, pieza))() for pieza in vaciar}),
+                          {**apagados, **params})
     return salida
 
 

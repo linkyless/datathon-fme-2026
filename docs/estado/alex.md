@@ -1,12 +1,14 @@
 # Estado de Alex
 
 - **Rol:** Evaluación (docs/guias/evaluacion.md)
-- **Actualizado:** sáb 16:30
+- **Actualizado:** sáb 16:50
 
 ## Haciendo ahora
-- E4: intervalo de confianza (bootstrap) en evaluar.py. Pendiente: re-medir interruptores cuando haya co-visitas.
+- E4: intervalo de confianza (bootstrap) en evaluar.py. Leer el A/B en vivo con el panel.
 
 ## Terminado
+- E2 (v1): medida `e-samen-v1` y sus piezas por separado. **NO APTA**: purchase_hit 0.16 vs 0.86 de la v0.
+  Culpable principal: el filtro de comprados. `evaluar.py` acepta ya variantes sueltas (`VARIANTES`).
 - E3: `python -m src.panel` (`--horas`, `--minutos`): por versión y tramo, % servido, tarde, inválidas, clics,
   compras, €/petición y latencia p95. Solo lee; tarda ~1 s. Es nuestro leaderboard en la final.
 - E2 (primera ronda): `evaluar.py` prueba ya TODAS las combinaciones de interruptores de `ranking.PARAMS`, en paralelo
@@ -15,6 +17,9 @@
 - E1: `src/evaluar.py` (`python -m src.evaluar`). Test y Estado se guardan en `data/` (no se sube). Primera fila en EXPERIMENTOS.
 
 ## Descubierto (cosas que los demás deben saber)
+- **La gente recompra**: el 61,6 % de las compras del carrusel en el test (876 de 1422) son productos que ese
+  usuario ya había comprado antes. Choca con la pista oficial ("quien compró no lo quiere otra vez"): preguntar en el stand.
+- El segmento frío del test solo tiene 35 compras: el purchase_hit frío es ruido; mirar el hit_rate frío.
 - **En `feedback`, "late" no aparece nunca**: lo que enviamos tarde sale como `fallback_reason = 'missing'`
   aunque esté en `submissions`. El panel lo cuenta como "tarde".
 - **Fiabilidad sáb 16:00-16:30: ~10 % de lo que enviamos llega tarde** (202 de 1890 en 16:15, p95 2251 ms) → 89-91 %
@@ -25,13 +30,8 @@
   lo que enseñó. Por eso baseline_categoria saca 0.76 de hit_rate pero un SNIPS más bajo que baseline_starter.
 
 ## Necesito de alguien
-- **Leonardo**: 1) co-visitas primero (es lo que más puede subir). 2) En `ranking.py` los vecinos se activan "si el
-  producto no tiene co-visitas"; sin co-visitas eso es SIEMPRE y hunde el hit_rate (0.76 → 0.05). Mejor "solo si el
-  producto es nuevo" (no está en el historial). Cuando estén, avísame y re-mido.
-- **Artai**: `populares_contexto` empeora a los fríos (purchase_hit 0.60 → 0.46). ¿Pocas compras por grupo
-  (device × región)? Propuesta: mezclarlo con los populares generales en vez de sustituirlos.
-- **Lester**: interruptores apagados en vivo. Si queréis probar vecinos, un A/B pequeño en vivo en la práctica: el
-  offline no puede premiar productos que el sistema antiguo casi no enseñaba.
-- **Leonardo**: en `src/ranking.py`, `sorted(estado.disponibles)` se calcula 2 veces en cada llamada aunque casi
-  nunca se use: es el 95 % del tiempo de `recommend()` (~2 ms/petición). Con eso el evaluador tarda ~12 min.
-  Si lo precalculas o lo ordenas solo cuando hace falta, baja a segundos.
+- **Leonardo**: interruptor `filtrar_comprados` en `PARAMS`, APAGADO por defecto (offline hunde purchase_hit
+  0.86 → 0.32). Probar también lo contrario: empujar lo ya comprado.
+- **Lester**: el brazo A del A/B (v1 sin co-visitas) NO es la v0: lleva el filtro de comprados. Propuesta:
+  A = v0 real (sin co-visitas ni filtro), B = co-visitas sin filtro. Y fiabilidad: 80 % servido a las 16:30
+  (392 tarde, p95 2,7 s): `python -m src.panel --horas 1`.

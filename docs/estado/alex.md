@@ -1,12 +1,14 @@
 # Estado de Alex
 
 - **Rol:** Evaluación (docs/guias/evaluacion.md)
-- **Actualizado:** sáb 16:50
+- **Actualizado:** sáb 17:15
 
 ## Haciendo ahora
-- E4: intervalo de confianza (bootstrap) en evaluar.py. Leer el A/B en vivo con el panel.
+- Leer el A/B en vivo con el panel (cuando lleve ≥ 1 h). Re-medir cuando Leonardo añada `filtrar_comprados`.
 
 ## Terminado
+- E4: `evaluar.py` imprime, para cada variante, la diferencia frente a v0, starter y la actual con su intervalo
+  de confianza del 95 % (bootstrap emparejado, 200) y un veredicto: sube / baja / puede ser suerte / idéntico.
 - E2 (v1): medida `e-samen-v1` y sus piezas por separado. **NO APTA**: purchase_hit 0.16 vs 0.86 de la v0.
   Culpable principal: el filtro de comprados. `evaluar.py` acepta ya variantes sueltas (`VARIANTES`).
 - E3: `python -m src.panel` (`--horas`, `--minutos`): por versión y tramo, % servido, tarde, inválidas, clics,

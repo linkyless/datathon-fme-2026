@@ -16,6 +16,8 @@ from datetime import date, timedelta
 from itertools import product
 from pathlib import Path
 
+import numpy as np
+
 from src import ranking
 from src.estado import Estado, construir
 from src.rawtree import query
@@ -23,6 +25,8 @@ from src.validar import errores_respuesta
 
 DATA = Path(__file__).resolve().parent.parent / "data"
 N_TEST = 100_000
+BOOTSTRAP = 200
+"""Cuántos remuestreos hace el bootstrap para el intervalo de confianza (ver `bootstrap()`)."""
 
 
 def fecha_corte() -> str:
@@ -127,15 +131,47 @@ def metricas(test: list[dict], recs: list[list[str]]) -> dict[str, float]:
     }
 
 
-def evaluar(test: list[dict], estado: Estado, params: dict) -> tuple[dict, dict, int]:
-    """Nota de una política en todo el test y en el segmento frío (sin vistas recientes)."""
+def aciertos(test: list[dict], recs: list[list[str]]) -> np.ndarray:
+    """Una fila por visita: [¿lo clicado está en nuestros 10?, ¿lo comprado está?]. 1/0, o NaN si no hubo clic/compra.
+
+    La media de cada columna (sin los NaN) es el hit_rate@10 y el purchase_hit@10. Se guarda visita a visita
+    para poder hacer el bootstrap."""
+    salida = np.full((len(test), 2), np.nan)
+    for i, (t, r) in enumerate(zip(test, recs)):
+        if t["clicked"]:
+            salida[i, 0] = t["clicked"] in r
+        if t["purchased"]:
+            salida[i, 1] = t["purchased"] in r
+    return salida
+
+
+def evaluar(test: list[dict], estado: Estado, params: dict) -> tuple[dict, dict, int, np.ndarray]:
+    """Nota de una política en todo el test y en el segmento frío (sin vistas recientes), y sus aciertos."""
     recs = [ranking.recommend(t, estado, params) for t in test]
     invalidas = sum(bool(errores_respuesta(r, estado.disponibles)) for r in recs)
     frias = [i for i, t in enumerate(test) if not t["recent_views"]]
-    return metricas(test, recs), metricas([test[i] for i in frias], [recs[i] for i in frias]), invalidas
+    return (metricas(test, recs), metricas([test[i] for i in frias], [recs[i] for i in frias]), invalidas,
+            aciertos(test, recs))
 
 
-def _evaluar_politica(nombre: str, corte: str) -> tuple[str, dict, dict, int]:
+def bootstrap(a: np.ndarray, b: np.ndarray, veces: int = BOOTSTRAP) -> list[tuple[float, float, float]]:
+    """Diferencia a - b en hit_rate y purchase_hit, con su intervalo de confianza del 95 %.
+
+    Bootstrap: se sortean, con repetición, tantas visitas como hay en el test y se recalcula la diferencia. Se
+    repite `veces` veces; el 95 % central de esas diferencias es el intervalo. Las dos políticas usan SIEMPRE las
+    mismas visitas sorteadas (bootstrap emparejado): así solo cuenta lo que cambia la política, no la suerte de
+    qué visitas tocaron. Si el intervalo no incluye el 0, la diferencia no es casualidad."""
+    azar = np.random.default_rng(0)  # semilla fija: el mismo resultado cada vez que se ejecuta
+    diferencia = np.nanmean(a, axis=0) - np.nanmean(b, axis=0)
+    muestras = []
+    for _ in range(veces):
+        idx = azar.integers(0, len(a), len(a))
+        muestras.append(np.nanmean(a[idx], axis=0) - np.nanmean(b[idx], axis=0))
+    bajo, alto = np.percentile(muestras, [2.5, 97.5], axis=0)
+    return [(float(d), float(lo), float(hi)) for d, lo, hi in zip(diferencia, bajo, alto)]
+
+
+def _evaluar_politica(nombre: str, corte: str) -> tuple[str, dict, dict, int, np.ndarray]:
     """Lo que hace cada proceso en paralelo: lee test y Estado de data/ y evalúa UNA política."""
     test = cargar_test(corte)
     estado, params = politicas(cargar_estado(corte, recalcular=False))[nombre]
@@ -148,6 +184,24 @@ def imprimir(resultados: dict[str, dict]) -> None:
     for nombre, fila in resultados.items():
         celdas = [f"{fila[c]:>17.4f}" if isinstance(fila[c], float) else f"{fila[c]:>17}" for c in columnas]
         print(f"{nombre:<36}" + "".join(celdas))
+
+
+def imprimir_diferencias(aciertos_por_politica: dict[str, np.ndarray], contra: str) -> None:
+    """Cada política frente a `contra`: diferencia e intervalo del 95 % en hit_rate y purchase_hit."""
+    def veredicto(lo: float, hi: float) -> str:
+        if lo == hi == 0:
+            return "idéntico"
+        return "sube" if lo > 0 else "baja" if hi < 0 else "puede ser suerte"
+
+    print(f"\nDiferencia frente a {contra} (intervalo de confianza del 95 %, bootstrap de {BOOTSTRAP}):")
+    print(f"{'política':<36}{'Δ hit_rate@10 [IC 95 %]':>32}{'':>18}{'Δ purchase_hit@10 [IC 95 %]':>32}")
+    for nombre, a in aciertos_por_politica.items():
+        if nombre == contra:
+            continue
+        celdas = ""
+        for d, lo, hi in bootstrap(a, aciertos_por_politica[contra]):
+            celdas += f"{d:>+10.4f} [{lo:+.4f}, {hi:+.4f}]  {veredicto(lo, hi):<16}"
+        print(f"{nombre:<36}{celdas}")
 
 
 def main() -> None:
@@ -167,13 +221,16 @@ def main() -> None:
     nombres = list(politicas(estado))
     with ProcessPoolExecutor() as pool:
         salidas = list(pool.map(_evaluar_politica, nombres, [corte] * len(nombres)))
-    resultados = {}
-    for nombre, todo, frio, invalidas in salidas:
+    resultados, aciertos_por_politica = {}, {}
+    for nombre, todo, frio, invalidas, acierto in salidas:
         resultados[nombre] = {**todo, "inválidas": invalidas}
         resultados[f"{nombre} (frío)"] = {**frio, "inválidas": "-"}
+        aciertos_por_politica[nombre] = acierto
     imprimir({k: v for k, v in resultados.items() if "frío" not in k})
     print("\nSegmento frío (sin vistas recientes):")
     imprimir({k: v for k, v in resultados.items() if "frío" in k})
+    for contra in ("baseline_categoria", "baseline_starter", "actual"):  # "actual": ¿qué aporta cada variante?
+        imprimir_diferencias(aciertos_por_politica, contra)
 
 
 if __name__ == "__main__":

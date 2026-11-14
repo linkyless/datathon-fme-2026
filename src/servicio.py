@@ -55,13 +55,15 @@ HILOS_ENVIO = 3
 """Trabajadores de envío en paralelo (medido: un insert tarda 0,3-1 s)."""
 _CANDADO = threading.Lock()
 
-VARIANTES: list[tuple[str, dict]] = [("-A", {"_sin_covisitas": True}), ("-B", {})]
+VARIANTES: list[tuple[str, dict]] = [("-C", {"_sin_covisitas": True, "_sin_comprados": True}),
+                                     ("-D", {"_sin_comprados": True})]
 """Reparto A/B (tarea O6). Cada comprador cae SIEMPRE en la misma variante: hash(user_id) % len(VARIANTES).
 Cada variante = (sufijo del nombre, params para ranking.recommend). Ejemplo para probar re-visitas:
     VARIANTES = [("-A", {}), ("-B", {"revisitas": True})]   ->  e-samen-v2-A y e-samen-v2-B en el leaderboard
 Con una sola variante ("", {}) todo el mundo recibe lo mismo y el nombre no lleva sufijo.
-Clave especial "_sin_covisitas": esa variante recomienda con las co-visitas vacías (la usa el servicio, no ranking).
-A/B actual (sáb 16:50): A = v1 sin co-visitas (≈ v0, control) · B = v1 completa. Única diferencia: las co-visitas."""
+Claves especiales (las aplica el servicio, no ranking): "_sin_covisitas" y "_sin_comprados" vacían esa pieza del Estado.
+A/B 16:41-16:55: A = v1 sin co-visitas, B = v1 completa (las dos con filtro de comprados: A no era la v0).
+A/B actual (sáb 16:55): C = v0 real (sin co-visitas ni filtro) · D = co-visitas sin filtro. Única diferencia: co-visitas."""
 
 
 def variante(peticion: dict) -> tuple[str, dict]:
@@ -187,9 +189,10 @@ def respuesta_segura(peticion: dict, estado: Estado, mv: str) -> tuple[dict, boo
     sufijo, params = variante(peticion)
     mv = mv + sufijo
     try:
-        if params.get("_sin_covisitas"):
-            estado = dataclasses.replace(estado, covisitas={})
-            params = {k: v for k, v in params.items() if k != "_sin_covisitas"}
+        vaciar = {"_sin_covisitas": "covisitas", "_sin_comprados": "comprados"}
+        if any(params.get(k) for k in vaciar):
+            estado = dataclasses.replace(estado, **{campo: {} for k, campo in vaciar.items() if params.get(k)})
+            params = {k: v for k, v in params.items() if k not in vaciar}
         items = ranking.recommend(peticion, estado, params)
         if not errores_respuesta(items, disponibles):
             return {"request_id": peticion["request_id"], "items": items, "model_version": mv}, False

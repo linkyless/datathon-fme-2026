@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import argparse
 import pickle
+from concurrent.futures import ProcessPoolExecutor
 from datetime import date, timedelta
+from itertools import product
 from pathlib import Path
 
 from src import ranking
@@ -70,14 +72,26 @@ def cargar_estado(corte: str, recalcular: bool) -> Estado:
     return estado
 
 
-def politicas(estado: Estado) -> dict[str, Estado]:
-    """Los tres "alumnos". Todos usan ranking.recommend; solo cambia lo que tienen en la libreta."""
+INTERRUPTORES = ["usar_contexto", "usar_vecinos"]
+"""Interruptores de ranking.PARAMS que se prueban en todas sus combinaciones (encendido/apagado)."""
+
+
+def politicas(estado: Estado) -> dict[str, tuple[Estado, dict]]:
+    """Los "alumnos": (libreta, interruptores). Todos usan ranking.recommend.
+
+    Los dos baselines llevan los interruptores apagados; "actual" sale una vez por cada combinación de INTERRUPTORES.
+    """
     base = dict(catalogo=estado.catalogo, disponibles=estado.disponibles, populares=estado.populares)
-    return {
-        "baseline_starter": Estado(**base),                                                    # más vendidos de siempre
-        "baseline_categoria": Estado(**base, populares_categoria=estado.populares_categoria),  # el de las diapositivas
-        "actual": estado,                                                                      # todo lo del equipo
+    apagados = {i: False for i in INTERRUPTORES}
+    salida = {
+        "baseline_starter": (Estado(**base), apagados),                                                    # más vendidos de siempre
+        "baseline_categoria": (Estado(**base, populares_categoria=estado.populares_categoria), apagados),  # el de las diapositivas
     }
+    for combinacion in product([False, True], repeat=len(INTERRUPTORES)):
+        params = dict(zip(INTERRUPTORES, combinacion))
+        encendidos = [i.removeprefix("usar_") for i, on in params.items() if on]
+        salida["actual" + "".join(f" +{e}" for e in encendidos)] = (estado, params)
+    return salida
 
 
 def metricas(test: list[dict], recs: list[list[str]]) -> dict[str, float]:
@@ -102,20 +116,27 @@ def metricas(test: list[dict], recs: list[list[str]]) -> dict[str, float]:
     }
 
 
-def evaluar(test: list[dict], estado: Estado) -> tuple[dict, dict, int]:
+def evaluar(test: list[dict], estado: Estado, params: dict) -> tuple[dict, dict, int]:
     """Nota de una política en todo el test y en el segmento frío (sin vistas recientes)."""
-    recs = [ranking.recommend(t, estado) for t in test]
+    recs = [ranking.recommend(t, estado, params) for t in test]
     invalidas = sum(bool(errores_respuesta(r, estado.disponibles)) for r in recs)
     frias = [i for i, t in enumerate(test) if not t["recent_views"]]
     return metricas(test, recs), metricas([test[i] for i in frias], [recs[i] for i in frias]), invalidas
 
 
+def _evaluar_politica(nombre: str, corte: str) -> tuple[str, dict, dict, int]:
+    """Lo que hace cada proceso en paralelo: lee test y Estado de data/ y evalúa UNA política."""
+    test = cargar_test(corte)
+    estado, params = politicas(cargar_estado(corte, recalcular=False))[nombre]
+    return (nombre, *evaluar(test, estado, params))
+
+
 def imprimir(resultados: dict[str, dict]) -> None:
     columnas = ["n", "hit_rate@10", "purchase_hit@10", "IPS_ctr_slot1", "SNIPS_ctr_slot1", "slot1_matches", "inválidas"]
-    print(f"{'política':<30}" + "".join(f"{c:>17}" for c in columnas))
+    print(f"{'política':<36}" + "".join(f"{c:>17}" for c in columnas))
     for nombre, fila in resultados.items():
         celdas = [f"{fila[c]:>17.4f}" if isinstance(fila[c], float) else f"{fila[c]:>17}" for c in columnas]
-        print(f"{nombre:<30}" + "".join(celdas))
+        print(f"{nombre:<36}" + "".join(celdas))
 
 
 def main() -> None:
@@ -131,9 +152,12 @@ def main() -> None:
     print(f"Corte {corte} · test {len(test)} visitas · {clics} con clic · {compras} con compra · "
           f"versión medida: {ranking.NOMBRE}\n")
 
+    # Cada política en su propio proceso (una por núcleo): mismo resultado, varias veces más rápido.
+    nombres = list(politicas(estado))
+    with ProcessPoolExecutor() as pool:
+        salidas = list(pool.map(_evaluar_politica, nombres, [corte] * len(nombres)))
     resultados = {}
-    for nombre, est in politicas(estado).items():
-        todo, frio, invalidas = evaluar(test, est)
+    for nombre, todo, frio, invalidas in salidas:
         resultados[nombre] = {**todo, "inválidas": invalidas}
         resultados[f"{nombre} (frío)"] = {**frio, "inválidas": "-"}
     imprimir({k: v for k, v in resultados.items() if "frío" not in k})

@@ -96,8 +96,10 @@ python starter/recommender.py        # baseline oficial EN VIVO (solo el operado
   `python -m src.prueba_local` → commit → `git pull --rebase` → `git push`. Si `prueba_local` falla, no se sube.
 - Commits pequeños en español: `coview: filtra productos ya comprados`. Añade archivos concretos (`git add src/x.py`), nunca `git add .` a ciegas.
 - `git push` lo decide siempre la persona, no el agente. Estar en `main` NO es estar en vivo: solo pasa a vivo
-  cuando Evaluación lo ha medido y el Operador reinicia el servicio. Excepción: en práctica (hasta el dom 08:00)
-  una versión SIMPLE puede ir en vivo para medirla con el ok del Operador. Desde el dom 08:00, nada sin Evaluación.
+  cuando Evaluación lo ha medido y el Operador reinicia el servicio. También en práctica: ningún cambio de modelo
+  en vivo sin una fila de Evaluación en `docs/EXPERIMENTOS.md` (lección del sáb tarde: 5 cambios sin revisión).
+  El agente del Operador no reinicia el servicio por iniciativa propia: lo propone y espera el ok de la persona.
+  Todo lo que se descubra se apunta en el repo (estado, EXPERIMENTOS) ANTES de actuar en vivo.
 - La versión que corre en la ronda final se etiqueta: `git tag final`.
 
 ## Calendario (hora de Barcelona)

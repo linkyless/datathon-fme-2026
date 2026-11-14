@@ -54,7 +54,15 @@ LIMIT {vecinos} BY p"""
 
 
 def _archivo(hasta: str | None) -> Path:
-    return _DATA / f"covisitas_{hasta or 'todo'}_exp{EXPONENTE_POPULARIDAD:g}.json"
+    """Nombre del cache, con FIRMA de todos los parámetros que cambian el resultado.
+
+    Si cambian los pesos, VECINOS o el exponente, el nombre cambia y el cache viejo
+    se ignora automáticamente (antes solo dependía de `hasta` y el exponente: un cambio
+    de pesos dejaba el servicio leyendo co-visitas viejas sin darse cuenta).
+    """
+    firma = (f"exp{EXPONENTE_POPULARIDAD:g}_v{VECINOS}"
+             f"_pesos{PESO_VISTA}-{PESO_CARRITO}-{PESO_COMPRA}")
+    return _DATA / f"covisitas_{hasta or 'todo'}_{firma}.json"
 
 
 def _consultar(hasta: str | None) -> dict[str, list[tuple[str, float]]]:
@@ -71,8 +79,9 @@ def cargar_covisitas(hasta: str | None = None) -> dict[str, list[tuple[str, floa
     """product_id -> [(otro_product_id, peso), ...] ordenado de mayor a menor peso (máx. VECINOS por producto).
 
     `hasta` ('YYYY-MM-DD'): usar solo eventos con ts < hasta. None = todo (en vivo).
-    La consulta es pesada: el resultado se guarda en data/covisitas_<hasta>_exp<exponente>.json y se reutiliza.
-    Para recalcular, borra ese archivo.
+    La consulta es pesada: el resultado se guarda en data/covisitas_...json y se reutiliza.
+    El nombre del archivo incluye los parámetros (pesos, vecinos, exponente): cambiarlos
+    invalida el cache solo. Para recalcular con los mismos parámetros, borra ese archivo.
     """
     if hasta is not None and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", hasta):
         raise ValueError(f"hasta debe ser 'YYYY-MM-DD', no {hasta!r}")

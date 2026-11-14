@@ -124,33 +124,59 @@ def refrescar(estado: Estado, parar: threading.Event) -> None:
             return True
         return False
 
-    while not parar.is_set():
+    def intentar(nombre: str, cada_s: float, accion) -> None:
+        """Cada pieza por separado: si una falla (red, HelmCode...), las demás siguen, y la que falló se
+        reintenta en 60 s (no en su periodo normal, que para las pesadas son 30 min)."""
+        if not toca(nombre, cada_s):
+            return
         try:
-            if toca("stock", 1):
-                agotados = catalogo.cargar_agotados()
-                estado.disponibles = catalogo.disponibles(estado.catalogo, agotados)
-            if toca("catalogo", 15):
-                estado.catalogo = catalogo.cargar_catalogo()
-                estado.disponibles = catalogo.disponibles(estado.catalogo, agotados)
-                estado.populares_categoria = por_categoria(estado.catalogo, estado.populares)
-            if toca("populares", 600):
-                estado.populares = catalogo.cargar_populares()
-                estado.populares_categoria = por_categoria(estado.catalogo, estado.populares)
-            if toca("nuevos", 300) and hasattr(coldstart, "embeber_nuevos"):  # se activa cuando Artai suba D4
-                n = coldstart.embeber_nuevos()
-                log(f"embeber_nuevos: {n}")
-                ultimo["pesadas"] = -1e9  # recargar vecinos enseguida con los nuevos embeddings
-            if toca("pesadas", 1800):  # co-visitas, compras, cold start: tardan, pero no bloquean nada
-                t = time.monotonic()
-                estado.covisitas = covisitas.cargar_covisitas(None)
-                estado.comprados = usuarios.cargar_comprados(None)
-                estado.populares_contexto = coldstart.cargar_populares_contexto(None)
-                estado.vecinos = coldstart.cargar_vecinos(None)
-                log(f"piezas pesadas cargadas en {time.monotonic() - t:.1f} s: covisitas={len(estado.covisitas)} "
-                    f"comprados={len(estado.comprados)} contexto={len(estado.populares_contexto)} "
-                    f"vecinos={len(estado.vecinos)}")
-        except Exception as e:  # nos quedamos con lo anterior; se reintenta en la siguiente vuelta
-            log(f"refresco falló (sigo con lo anterior): {e}")
+            accion()
+        except (Exception, SystemExit) as e:  # SystemExit: embeddings.py lo lanza si falta la clave de HelmCode
+            ultimo[nombre] = time.monotonic() - cada_s + min(60, cada_s)
+            log(f"refresco de {nombre} falló (sigo con lo anterior): {e}")
+
+    def stock() -> None:
+        nonlocal agotados
+        agotados = catalogo.cargar_agotados()
+        estado.disponibles = catalogo.disponibles(estado.catalogo, agotados)
+
+    def cat() -> None:
+        estado.catalogo = catalogo.cargar_catalogo()
+        estado.disponibles = catalogo.disponibles(estado.catalogo, agotados)
+        estado.populares_categoria = por_categoria(estado.catalogo, estado.populares)
+
+    def populares() -> None:
+        estado.populares = catalogo.cargar_populares()
+        estado.populares_categoria = por_categoria(estado.catalogo, estado.populares)
+
+    def nuevos() -> None:
+        n = coldstart.embeber_nuevos()
+        log(f"embeber_nuevos: {n}")
+        if n:
+            ultimo["pesadas"] = -1e9  # recargar vecinos enseguida con los nuevos embeddings
+
+    def pesadas() -> None:  # co-visitas, compras, cold start: tardan, pero no bloquean nada
+        t = time.monotonic()
+        estado.covisitas = covisitas.cargar_covisitas(None)
+        estado.comprados = usuarios.cargar_comprados(None)
+        estado.populares_contexto = coldstart.cargar_populares_contexto(None)
+        estado.vecinos = coldstart.cargar_vecinos(None)
+        log(f"piezas pesadas cargadas en {time.monotonic() - t:.1f} s: covisitas={len(estado.covisitas)} "
+            f"comprados={len(estado.comprados)} contexto={len(estado.populares_contexto)} "
+            f"vecinos={len(estado.vecinos)}")
+
+    def bucle_nuevos() -> None:
+        """Hilo aparte: HelmCode puede tardar minutos (429 = reintenta sin fin). Nunca debe frenar el stock."""
+        while not parar.is_set():
+            intentar("nuevos", 300, nuevos)
+            parar.wait(5)
+
+    threading.Thread(target=bucle_nuevos, name="embeber", daemon=True).start()
+    while not parar.is_set():
+        intentar("stock", 1, stock)
+        intentar("catalogo", 15, cat)
+        intentar("pesadas", 1800, pesadas)  # antes que "nuevos": las co-visitas no esperan a HelmCode
+        intentar("populares", 600, populares)
         parar.wait(0.2)
 
 

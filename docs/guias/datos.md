@@ -56,7 +56,10 @@ Pega a tu agente (solo consultas, sin escribir código):
 Pega a tu agente:
 > Rellena `cargar_populares_contexto(hasta)` en src/coldstart.py: para cada pareja (device, region), los 50
 > productos más comprados en shop.history_events (event_type = 'purchase', ts < hasta si hay hasta), de más a
-> menos. Devuelve `{(device, region): [product_id, ...]}`. Comprueba con DESCRIBE los nombres de las columnas.
+> menos. Si `hasta` es None, da más peso a lo RECIENTE: suma las compras de shop.events de las últimas 2 horas con
+> peso 5 (el informe, punto 8: popularidad reciente, no histórica). Las parejas con pocas compras (< 20) se
+> completan con la lista global. Devuelve `{(device, region): [product_id, ...]}`. Comprueba con DESCRIBE los
+> nombres de las columnas.
 > Después ejecuta `python -m src.prueba_local`.
 
 **Hecho cuando:** devuelve una lista por pareja y la prueba pasa. Commit, push y pide a Evaluación que mida el
@@ -65,8 +68,8 @@ segmento frío.
 ## D4 · Productos nuevos: vecinos por descripción — hasta las 19:00
 Pega a tu agente:
 > Rellena `cargar_vecinos(hasta)` en src/coldstart.py: lee de team_29.scratch las filas tipo 'emb_v1', decodifica
-> los vectores y, para cada producto, calcula los 20 más parecidos (producto escalar, porque ya están
-> normalizados) con numpy. Devuelve `{product_id: [vecino, ...]}`. Añade además una función
+> los vectores y, para cada producto, calcula los 20 más parecidos DENTRO DE SU SUBCATEGORÍA (producto escalar,
+> porque ya están normalizados) con numpy; si en su subcategoría hay menos de 20, completa con los de su categoría. Devuelve `{product_id: [vecino, ...]}`. Añade además una función
 > `embeber_nuevos()` que busque en shop.catalog_updates los `new_product` que aún no estén en scratch, calcule
 > su embedding igual que src/embeddings.py y lo suba. Ejecuta `python -m src.prueba_local`.
 
@@ -81,5 +84,19 @@ fórmulas). 4. Resultados (solo números medidos). 5. Cómo aprende del stream. 
 
 ---
 
-## Fase 2 (tras el deep research)
-_Vacío. Aquí irán ideas avanzadas de cold start y de uso de RawTree (reto agéntico...). No empezar hasta que esté escrito._
+## Fase 2 (del deep research: docs/investigacion.md, puntos 4 y 8, ficha T7)
+
+**D6 · Que los productos nuevos hereden co-visitas (sáb noche).** Un producto nuevo no tiene co-visitas. Con sus
+vecinos por descripción se las "prestamos": sus co-visitas = media de las de sus vecinos, pesada por el parecido.
+Así entra en las recomendaciones como si llevara semanas en la tienda. Esto pide al Operador un campo nuevo
+(`covisitas_heredadas`) o que tu función devuelva las filas para mezclarlas en `covisitas`: decididlo juntos.
+> Lee el punto 8 de docs/investigacion.md. En src/coldstart.py añade `cargar_covisitas_heredadas(hasta, covisitas)`:
+> para cada producto SIN co-visitas, la media ponderada por similitud de las co-visitas de sus 20 vecinos.
+
+**D7 · La historia para el jurado (desde ya, cerrar el domingo).** El informe trae casi todo el guion:
+- "Generalizar, no memorizar": por qué usamos subcategoría, marca, precio y descripción y nunca el ID (DropoutNet).
+- La curva de atención por posición de Alex (un gráfico) y los coeficientes de la regresión de Leonardo
+  ("esto es lo que hemos aprendido de cómo compra la gente").
+- La tabla de EXPERIMENTOS con intervalos de confianza: "comprobamos antes de arriesgar".
+- Una diapositiva sobre RawTree: qué calculamos en SQL (co-visitas, populares, tendencias) y qué guardamos en scratch.
+- Una diapositiva honesta sobre lo que NO hicimos y por qué (redes neuronales, bandits por producto).

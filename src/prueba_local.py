@@ -26,6 +26,8 @@ def _estado_juguete(con_piezas: bool) -> Estado:
         e.comprados = {"u_1": {"p_002"}}
         e.populares_contexto = {("mobile", "ES"): ["p_010", "p_011"]}
         e.vecinos = {"p_nuevo": ["p_020", "p_021"]}
+    e.catalogo["p_001"]["category"] = "zapatos"
+    e.populares_categoria = {"zapatos": ["p_037", "p_030"]}   # p_037 agotado: debe saltarse
     return e
 
 
@@ -46,6 +48,8 @@ def main() -> None:
             errs = errores_respuesta(items, e.disponibles)
             assert not errs, f"{p['request_id']} (piezas={con_piezas}): {errs}"
             assert ms < 50, f"{p['request_id']}: recommend tarda {ms:.1f} ms"
+            if not con_piezas and p["request_id"] == "r1":
+                assert items[0] == "p_030", f"sin piezas, primero los populares de su categoría: {items[:3]}"
             if con_piezas and p["request_id"] == "r1":
                 assert "p_002" not in items, "recomienda algo que el usuario ya compró"
                 assert items[0] == "p_003", f"la co-visita disponible debería ir primera: {items[:3]}"

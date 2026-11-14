@@ -36,6 +36,9 @@ dice qué pegarle a tu agente, cómo saber que está hecha y para qué hora.
 - `hasta='YYYY-MM-DD'` = usar solo datos anteriores a esa fecha (para evaluar offline sin mirar el futuro).
   `hasta=None` = todo (en vivo). **Toda función `cargar_` tiene que respetarlo.**
 - `recommend()` nunca consulta RawTree, tarda < 5 ms y siempre devuelve 10 IDs de `estado.disponibles`.
+- `recommend(peticion, estado, params)`: `params` es un diccionario opcional (claves en `ranking.PARAMS`). Así el
+  Operador sirve variantes A/B en vivo ("con re-visitas" frente a "sin") sin tocar `ranking.py`.
+- **La estrategia sale de `docs/investigacion.md`** (el deep research). Cada guía tiene su "Fase 2" basada en él.
 - ¿Necesitas un campo nuevo en el `Estado`? Escríbelo en tu `docs/estado/<nombre>.md` → "Necesito de alguien":
   *"Operador: añade `tendencias: list[str]`, la rellena `cargar_tendencias()` en src/tendencias.py"*. Lo añade él.
 

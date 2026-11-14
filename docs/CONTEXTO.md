@@ -1,37 +1,26 @@
-# CONTEXTO COMPLETO — todo lo ocurrido hasta el sábado 14/11 a las 12:30
+# CONTEXTO — lo ocurrido hasta el sábado 14/11 a las 13:00
 
-Documento de traspaso. Lo escribió el asistente que ayudó a Lester a preparar el datathon, para que el agente que
-lo lea (Claude Code u OpenCode) tenga TODO el contexto y pueda decidir el siguiente paso. Léelo entero junto con
+Documento de traspaso para que el agente que lo lea (Claude Code u OpenCode) tenga el contexto previo. Léelo junto con
 `AGENTS.md`, `docs/reto.md`, `docs/rawtree.md`, `docs/ROADMAP.md` y `docs/GUIA.md`.
 
-## 1. Quiénes somos y cómo hay que tratarnos
+## 1. El equipo
 - Equipo `mental_descent()` en el Datathon FME 2026 (UPC Barcelona, 14-15 nov 2026). Cuatro personas: Lester,
   Leonardo, Alex y Artai. Reto elegido: **RawTree · Real-Time Recommendation**.
-- Lester es estudiante de Ingeniería Informática (UCA), programador competitivo en C++. Fuerte en algoritmos y
-  matemáticas, pero **no sabe ML, ni desarrollo web, ni casi SQL**. El resto del equipo también es principiante.
-- Cómo explicarle las cosas a Lester: en español, en prosa, sin dar por hecho términos técnicos (explicar cada uno
-  la primera vez), apoyándose en lo que ya sabe (algoritmos, C++), con datos justos y sin textos interminables.
-  Pasos concretos y comprobables.
-- Herramientas: hay **tres suscripciones de Claude** en el equipo (Claude Code). El resto usará **OpenCode** con los
-  modelos gratuitos de **HelmCode** (ver sección 4).
+- Cómo explicar las cosas: en español, en prosa, explicando cada término técnico la primera vez, con datos justos
+  y pasos concretos y comprobables. Cada uno tiene que poder defender su parte ante el jurado.
+- Herramientas: tres personas con Claude Code y una con OpenCode + modelos gratuitos de HelmCode (ver sección 4).
+- Reparto y guías por rol: `docs/guias/`.
 
-## 2. Estado actual (12:30 del sábado)
-- **El baseline oficial está EN VIVO** desde las 12:27 en el portátil de Lester. Imprime `answered N` cada fracción
-  de segundo. Es el único proceso que responde por el equipo. **No hay que pararlo ni lanzar otro.**
-  - Carpeta: `C:\Users\linky\datathon-fme-2026` (clon del starter oficial), con su propio `.venv` y su `.env`.
-- Credenciales: `TEAM_ID=team_29`. La `RAWTREE_API_KEY` está en el `.env` (no copiarla nunca a ningún sitio). Se
-  probó con una consulta `SELECT 1` y funciona.
-- Nuestro repo (este) está en `E:\Programming\datathon\datathon-fme-2026` y en GitHub (`linkyless/datathon-fme-2026`). **Hecho a las 13:00** (lo de abajo era el plan):
-  `git init`, primer commit, subirlo a GitHub privado (`gh repo create datathon-fme-2026 --private --source=. --push`)
-  e invitar a Leonardo, Alex y Artai como colaboradores. Usuario de GitHub de Lester: `linkyless`.
-- Roles del ROADMAP: **sin asignar todavía**.
-- No se ha mirado aún el leaderboard (debería aparecer team_29 a los 10-20 min de arrancar).
+## 2. Estado (sábado 13:00)
+- **El baseline oficial está EN VIVO** desde las 12:27 en el portátil del Operador (Lester), en una carpeta aparte
+  con el starter oficial. Es el único proceso que responde por el equipo. **No hay que pararlo ni lanzar otro.**
+- `TEAM_ID=team_29` (no es secreto: sale en el leaderboard). La `RAWTREE_API_KEY` vive solo en el `.env`.
+- Repo en GitHub (privado), con los cuatro como colaboradores. Roles asignados en `docs/ROADMAP.md`.
 
-## 3. El portátil de Lester (Windows) y sus trampas
-- Windows con PowerShell, usuario `linky`.
-- **Hay dos Python**: `python` a secas abre el de MSYS2 (`C:\msys64\ucrt64\bin\python.exe`, sin pip). El bueno es
-  Python 3.13 oficial, accesible con `py`. Solución aplicada: `py -m venv .venv`, activar con
-  `.venv\Scripts\Activate.ps1`, y dentro del entorno usar `python -m pip ...`. Con `(.venv)` delante, `python` es el bueno.
+## 3. Trampas de Windows
+- **Puede haber varios Python**: si `python` a secas no tiene pip (p. ej. el de MSYS2), usar el lanzador oficial:
+  `py -m venv .venv`, activar con `.venv\Scripts\Activate.ps1`, y dentro del entorno usar `python -m pip ...`.
+  Con `(.venv)` delante, `python` es el bueno.
 - **PowerShell rompe el JSON**: `curl.exe -d '{\"sql\":...}'` dio "Invalid request body" e `Invoke-RestMethod` dio
   "Internal Server Error" incluso con `SELECT 1`. Lo que funciona: guardar el JSON en un archivo
   (`Out-File -Encoding ascii body.json`) y enviarlo con `curl.exe ... --data-binary "@body.json"`. Mejor aún: hacer
@@ -93,7 +82,7 @@ lo lea (Claude Code u OpenCode) tenga TODO el contexto y pueda decidir el siguie
 3. Cold start: usuario nuevo → popular por contexto (device, region, page); producto nuevo → vecinos por embedding
    de la descripción (y por categoría/subcategoría/marca/precio).
 4. Aprender del feedback: subir lo que convierte, algo de exploración (tipo bandit).
-5. Si sobra tiempo: un modelo que reordene candidatos (nadie del equipo ha entrenado modelos aún: ir con cuidado).
+5. Después: un modelo que reordene candidatos (decidirlo con el deep research y con los números del nivel 1).
 Cada peldaño se mide offline con el notebook (IPS) contra el baseline ANTES de ir en vivo, y se apunta en
 `docs/EXPERIMENTOS.md`. `model_version` = nombre de la versión (idealmente con el hash corto del commit).
 
@@ -103,19 +92,15 @@ Cada peldaño se mide offline con el notebook (IPS) contra el baseline ANTES de 
   `/freeze` en `.claude/commands/` y `.opencode/commands/`, que siguen `docs/procedimientos/`.
 - `.githooks/pre-commit`: bloquea `.env`, claves y datos (probado). Activar con `git config core.hooksPath .githooks`.
 - `src/validar.py`: valida respuestas (10, distintas, activas). `python -m src.validar` pasa.
-- Roles propuestos: Operador (Claude Code), Ranking (Claude Code), Evaluación (Claude Code), Datos y relato (OpenCode).
+- Roles: Operador (Lester), Ranking (Leonardo), Evaluación (Alex), Datos y relato (Artai). Guías en `docs/guias/`.
 - Calendario clave: Dom 08:00 congelar, 10:00-12:00 final, tarde presentación.
 
 ## 9. Pendientes y preguntas abiertas
-- Subir el repo a GitHub e invitar a los tres (sección 2).
-- Repartir roles y decidir quién es el Operador y en qué portátil corre el servicio por la noche y el domingo.
-- Preguntar en el stand: qué es exactamente el baseline del 0 (sección 5).
-- Preguntar por Discord: enchufes y wifi estable para dejar un portátil toda la noche.
-- Más adelante (no ahora): un deep research sobre la mejor estrategia para el recomendador.
-- Mover el servicio en vivo a este repo (copiando `starter/recommender.py` a `src/` y arreglando los fallos de la
-  sección 6) SIN dejar huecos: arrancar el nuevo y parar el viejo casi a la vez, y comprobar que no hay duplicados.
+- Preguntar en el stand: qué es exactamente el baseline del 0 (sección 5) y el resto de `docs/deep_research.md`.
+- Enchufes y wifi estable para dejar el portátil del Operador toda la noche.
+- Lanzar el deep research (`docs/deep_research.md`) y pasar sus conclusiones a la "Fase 2" de cada guía.
+- Relevo del baseline al servicio propio (`src/servicio.py`) sin huecos ni duplicados: tarea O3 de `docs/guias/operador.md`.
 
-## 10. Lo que se pide al agente que lea esto
-Con todo lo anterior, dile a Lester **cuál es el siguiente paso más importante ahora mismo y por qué**, en pocas
-líneas y con los comandos exactos para Windows PowerShell. Luego propón los dos o tres siguientes. Respeta las reglas
-de `AGENTS.md` (sobre todo: no tocar el baseline que está en vivo y no mostrar nunca claves).
+## 10. Qué hacer después de leer esto
+Ir a `docs/guias/README.md` y a la guía del rol de la persona. Respetar `AGENTS.md` (sobre todo: no tocar el
+servicio en vivo y no mostrar nunca claves).

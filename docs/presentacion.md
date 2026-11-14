@@ -1,100 +1,142 @@
-# Presentación (borrador para el jurado · demo sábado tarde)
+# Presentación · mental_descent() · RawTree Real-Time Recommendation
 
-**Revisión con el equipo: punto de control de las 21:00.** Regla: aquí solo entran números medidos
-(es decir, `docs/EXPERIMENTOS.md` o consultas ejecutadas); si algo no está medido, se escribe "no medido aún".
-Estado de este borrador: sáb ~14:35 BCN (los datos del stream van ~1 h por detrás de lo que ves; ts en UTC).
+**Estado: sáb ~15:40 BCN. BORRADOR DE TRABAJO.**
+⚠️ **Las cifras de resultados NO están aquí todavía**: se añadirán cuando Evaluación y el stream las den
+(cada hueco va marcado **[PENDIENTE: resultado]**). Regla del equipo: solo entran números de
+`docs/EXPERIMENTOS.md`, de `team_29.feedback` o de consultas ejecutadas — nada inventado.
+
+La presentación tiene dos hilos, entrelazados:
+
+1. **El reto principal**: recomendador en tiempo real que compite con el baseline.
+2. **Tukey (side challenge)**: nuestro **dashboard de decisiones** — la herramienta con la que sabremos
+   *qué decisión tomar* (subir un peldaño, revertir, explorar). La enseñamos como demo en directo: es
+   simultáneamente nuestra sala de máquinas y el side challenge.
 
 ---
 
 ## 1. El problema en una frase
 
-Una tienda online decide, para cada comprador que llega (~3 por segundo, día y noche), los 10 productos que
-le enseña… en menos de 3 segundos — el 70 % de la nota depende de acertar esa fila, incluidos los compradores
-y productos que acaban de aparecer.
+Una tienda online (~5.000 productos) tiene que elegir, para cada comprador que llega (~3/s, día y noche), los
+**10 productos** que mostrar en su fila de recomendados en **menos de 3 s**; un modelo oculto decide si el
+comprador compra, y 70 % de la nota es ganarle al baseline los más vendidos.
 
-## 2. Nuestra escalera: subir un peldaño cada vez, midiendo antes de subir
+## 2. Nuestra estrategia: la escalera y por qué (evidencia, no intuición)
+
+Nos apoyamos en `docs/investigacion.md` (deep research con fuentes) y en lo que enseñan los números del
+leaderboard público (`docs/competencia.md`):
+
+| Política | Conversión | Interpretación |
+|---|---|---|
+| Baseline (más vendidos de siempre) | 0,66 % | el 0 de la nota |
+| Más vendidos de la categoría de lo último visto | 0,79 % (+20 %) | la categoría sola explica poco |
+| Referencia de los organizadores | 2,09 % (+217 %) | se puede triplicar con ticket más caro |
+
+**Lectura (inferencia nuestra, la diremos como tal):** lo que premia el modelo oculto es la *afinidad fina con
+la sesión* (subcategoría, marca, rango de precio), no la categoría en bloque; y el precio frena menos de lo
+que parece. "Los equipos que generalizan ganan a los que memorizan": features por **atributos** (calculables
+para un producto nuevo), nunca por ID.
+
+De ahí la escalera (cada peldaño se mide offline antes de subir; en práctica, versiones simples pueden ir
+en vivo con el ok del Operador para medir con compradores reales):
 
 ```
-Nivel 0  Baseline en vivo, sin caerse                  ← FIABILIDAD (10 pts)
-Nivel 1  Co-visitas: "quien vio X compró Y" + stock    ← CONVERSIÓN (50 pts)
-Nivel 2  Tendencias de la última hora + desempate por precio
-Nivel 3  Cold start: comprador nuevo por contexto · producto nuevo por embedding   ← COLD START (10 pts)
-Nivel 4  Aprender del feedback (subir lo que convierte)
-Nivel 5  Modelo que reordena candidatos
+N0  Baseline en vivo, sin caerse                          → fiabilidad
+N1  Co-visitas por sesión + filtro stock/comprados        → la pieza grande
+N2  Tendencias (EWMA) + desempate por precio (mediana)    → aprender del stream
+N3  Cold start: comprador nuevo (contexto) · producto nuevo (embeddings) → los 10 pts fríos
+N4  Aprender de nuestro feedback (parámetros compartidos, no 5.000 brazos)
+N5  Reordenar con un modelo (reutiliza TODO lo anterior)
 ```
 
-Cada peldaño se mide **offline** antes de ir en vivo, y las decisiones están en `docs/DECISIONES.md`.
-Hoy en vivo: Nivel 0 → Nivel 1 en pruebas (e-samen-v0). Hoy construido: Nivel 3 completo (sección 6).
+**[PENDIENTE: estado actual de la escalera al presentar (qué está en vivo y qué está medido)]**
 
-## 3. Cómo validamos antes de arriesgar (sin fórmulas)
+## 3. El dashboard de Tukey: de cada pregunta a una decisión
 
-El historial del carrusel viejo está **sesgado**: solo enseñaba lo popular, así que en los datos "lo popular
-vende bien" siempre. Si evaluáramos contra esos datos sin corregir, elegiríamos lo de siempre para siempre.
-La corrección (IPS, en palabras): cada acierto del historial vale más cuanto menos probable era que el sistema
-viejo lo hubiera enseñado — recompensa lo que sabíamos mostrar poco. Además vigilamos `SNIPS` (la misma idea
-para que el azar no engañe) y `slot1_matches` (si nuestro ranking casi clona el viejo, la medición no puede
-no puede distinguirnos y no dice nada). Estado: el evaluador offline lo está montando Evaluación; **sin números todavía**.
+Criterio 1 de Tukey es "sirve para decidir". Cada panel del dashboard nace de UNA pregunta del reto y acaba
+en UNA decisión que podemos tomar hoy:
 
-## 4. Resultados (solo números medidos; fuente: consultas ejecutadas y `docs/EXPERIMENTOS.md`)
+| Pregunta del reto | Indicador (panel) | Gráfico | Decisión que alimenta |
+|---|---|---|---|
+| ¿Convertimos mejor que el baseline? | compras/100 peticiones por versión y por hora | línea con dos series (nuestra v vs baseline) y banda de diferencia | subir el peldaño o **revertir** (regla: 30-60 min en vivo; si no mejora, fuera) |
+| ¿Perdemos peticiones? ¿por qué? | % servido por nosotros; fallbacks por motivo; p50/p95 latency | barra apilada por motivo + líneas p95 | robustez: timeout, relevo, relleno por fallback precalculado |
+| ¿Dónde miran y dónde compran? | clics y compras por posición 1-10 del carrusel viejo | barras por posición | curva E(k) de posición → ponderación IPS y orden (arriba = probabilidad de compra, no por ingreso) |
+| ¿Qué decide la compra? | conversión según subcategoría/marca/rango de precio de lo último visto | barras de lift por atributo | qué features y pesos usa el ranker (afinidad fina, recencia) |
+| ¿Cuánto pesa el mundo frío? | % is_new_user, % sin recent_views; conversión del segmento frío | anillo + comparativa de conversión | prioridad del nivel 3 y exposición de exploración a productos nuevos |
+| ¿Qué se está moviendo? | EWMA de vistas/carritos/compras por subcategoría (últimos 2 h vs 24 h) | sparklines por subcategoría | subir tendencias al ranking, explorar en slots 8-10 |
+| ¿Cómo evoluciona la tienda? | altas, cambios de precio, roturas de stock (catalog_updates) | línea diaria + días de stock | cada cuánto refrescar catálogo y cuándo re-embeber productos nuevos |
 
-**En vivo** (`team_29.feedback`, ts en UTC; baseline 101 min, v0 21 min):
+Todo el panel lee de las MISMAS tablas que usan el evaluador y el servicio (`team_29.feedback`,
+`shop.events`, `shop.catalog_updates`, `docs/EXPERIMENTOS.md`) → **criterio 3 de Tukey (coherencia)**: lo
+que ves en el panel es exactamente el número con el que decidimos; ninguna métrica tiene dos definiciones.
 
-| | peticiones | clics | compras | latencia media |
-|---|---|---|---|---|
-| baseline del starter | 18.180 | 2,49 % | 0,79 % | 1.207 ms |
-| e-samen-v0 (nuestra v0) | 3.901 | 2,49 % | 0,56 % | 1.009 ms |
+**[PENDIENTE: captura del dashboard + enlace/dato del prototipo en directo]**
 
-- Fiabilidad v0: 93,4 % servido por nosotros (257 fallbacks `missing`, 1 `invalid`); p50/p95 773/1.091 ms
-  — el baseline p95 era 2.232 ms, cerca del límite de 3 s.
-- La v0 aún no supera en conversión al baseline (0,56 % vs 0,79 % en 21 min): no es un mal resultado aisladado,
-  es la razón por la que medimos ANTES de subir peldaños — la decisión de ir peldaño a peldaño sale de esto.
+## 4. Cómo validamos antes de arriesgar (sin fórmulas)
 
-**Nuestros datos (D2, consultas en `docs/datos.md`):**
-- ~30 % de compradores son nuevos (29,79 % en la última hora); ~20 % entra sin nada visto → 1 de cada 3-5
-  peticiones es "fría": el cold start no es un caso raro, es un tercio del stream.
-- Catálogo: 5.100 productos, 5.064 disponibles (36 agotados/inactivos); stock se mueve (144 out_of_stock,
-  108 back_in_stock y 100 productos nuevos en menos de un día de evento).
-- El precio medio tiene colas (Books & Media: 79 € medio vs 30 € mediano) → para desempatar por ingreso,
-  mediana, no media.
-- Device y región cambian poco la conversión (4,2-4,9 %): sirven para elegir **a quién**, no para mejorarla.
+- El historial del carrusel está **sesgado** (solo enseñaba lo popular y "algo de azar"). En esos datos,
+  "lo popular" siempre parece bueno: evaluar sin corregir decide mal.
+- Corrección en palabras (IPS/SNIPS): cada acierto del historial pesa más cuanto menos probable era que lo
+  enseñara el sistema viejo (usamos su `propensity`, que viene en los datos).
+- Los 10 slots no valen lo mismo: el usuario mira mucho más arriba. Corregimos también por posición (modelo
+  de examen por slot), estimado del propio log.
+- **Calibración con verdades conocidas**: el estimador tiene que ordenar "categoría de lo último visto"
+  (0,79 %) por encima de "más vendidos" (0,66 %) y con la diferencia correcta; si no, no se fía de él.
+- Corte temporal (entrenar con días 1-50, validar con 51-60) y **segmento frío** para simular la final.
+- En vivo: regla dura — 30-60 min por versión; si la conversión no mejora, se revierte. Nada entra a la
+  ronda final sin haber pasado por offline.
 
-**Nuestra pieza de cold start (medido hoy, D1-D4):**
-- 5.000 descripciones embebidas (4096 dims, normalizadas) + los 100 productos nuevos, en `team_29.scratch`.
-- Vecinos por producto: en el 98,4 % de los casos el vecino es de la misma categoría (77 % misma subcategoría):
-  los vecinos "tienen sentido" y no requieren que el producto tenga ventas.
-- 3 ejemplos de producto nuevo → vecinos de su misma subcategoría y marca (ver `docs/estado/artai.md`).
+**[PENDIENTE: resultados del evaluador offline por versión — Evaluación]**
 
-## 5. Cómo aprende del stream
+## 5. Lo que ya medimos del stream (hecho, con número)
 
-1. Mientras tanto, precalculamos cada pocos minutos en SQL (co-visitas recientes, tendencias 15 min vs 3 h)
-   y el servicio solo lee del `Estado` en memoria: el bucle en vivo no consulta RawTree.
-2. Leemos nuestro propio `feedback` cada pocos minutos: es nuestro leaderboard privado durante la final
-   (el oficial queda oculto): conversión por hora, motivos de fallback, latencia.
-3. Aprende de verdad: subir las recomendaciones que convierten (tipo bandit) y re-embeber los productos
-   nuevos cada ~5 min (`embeber_nuevos()`) para que un producto de hace 5 minutos ya tenga vecinos.
-4. Exploración medible: un pequeño porcentaje de recomendaciones "curiosas" con registro en EXPERIMENTOS.
+| Qué | Número | Fuente |
+|---|---|---|
+| Compradores nuevos (última hora) | 29,79 % | `shop.requests` |
+| Sin nada visto en la sesión | 19,82 % | `shop.requests` |
+| Catálogo / disponibles | 5.100 / 5.064 | `src/catalogo.py` |
+| Altas / agotados / reposiciones / cambios de precio | 100 / 144 / 108 / 1.241 | `shop.catalog_updates` |
+| Latencia del streaming de nuestro v0 (p50/p95) | 773 / 1.091 ms (baseline: 1.238 / 2.232) | `team_29.feedback` |
+| Vecinos por embedding en la misma categoría | 98,4 % (77,3 % misma subcategoría) | `src/embeddings.py` + `shop.catalog` |
 
-## 6. Cómo usamos RawTree (y por qué es clave aquí)
+(Completa de resultados de conversión A/B en la final: sección "Resultados" **[PENDIENTE]**.)
 
-- **SQL sobre JSON sin esquema con casteo explícito**: todas las columnas son `Dynamic`; filtramos SIEMPRE
-  por tiempo y limitamos: las tablas en vivo crecen sin parar (12M de eventos en 60 días).
-- **Todo lo pesado, precalculado**: co-visitas y tendencias se calculan fuera del bucle; `recommend()`
-  responde en ~0,8 ms por petición con 0 respuestas inválidas (medido sobre 200 peticiones reales).
-- **`team_29.scratch` como nuestra memoria**: 5.100 embeddings (float16 en base64) compartidos entre el
-  script de embeddings y el servicio, sin ficheros que sincronizar.
-- **`catalog_updates` como fuente de verdad de las altas**: los productos nuevos no están (aún) en
-  `shop.catalog`: los cogemos de ahí para embeber sin intervención humana.
-- **`team_29.feedback` + logs**: medimos latencia y causas de fallback en vivo; el relevo de servicios se
-  hace sin duplicar respuestas (0 duplicados en el relevo de las 14:08).
+## 6. Uso de RawTree (por qué esta pieza decide el reto)
 
-## 7. Qué haríamos con más tiempo
+- **Consultas que respetan la base**: columnas `Dynamic` con casteo explícito, SIEMPRE filtro por `ts`, en
+  las tablas en vivo; una sentencia por petición. Sabemos qué rompe (columna nueva sobre tabla vacía,
+  comparar sin castear) y lo documentamos (`docs/datos.md`).
+- **Nada de consultas pesadas en el bucle** (la consulta sin filtro del starter llegó a tardar 10 s): precalcular
+  en SQL y servir desde memoria. `recommend()` en <1 ms por petición.
+- **`team_29.scratch` = memoria del equipo**: 5.100 embeddings (4096 dims, normalizados, float16+base64)
+  compartidos entre el script de embeddings y el servicio, sin ficheros que sincronizar.
+- **`catalog_updates` como fuente de altas**: los productos nuevos no están en `shop.catalog`; los
+  embebemos desde ahí (`embeber_nuevos()`) para que un producto de hace 5 min ya tenga vecinos.
+- **`team_29.feedback` como sala de observación**: conversiones por hora, fallbacks, latencias → es a la vez
+  lección y dashboard. RawTree no es solo el almacen: es el canal por el que el stream nos habla.
 
-- **Modelo que reordena** (nivel 5): regresión logística → LightGBM con las features que ya precalculamos
-  (co-visitas, precio relativo a la categoría, tendencia, recencia del producto visto).
-- **Thompson sampling** sobre pocas variantes del ranking (no una parrilla infinita) para aprender en horas,
-  no en días.
-- **Cold start de comprador más fino**: popularidad por (device, region, page) con ventana corta, y vecinos
-  por embedding ponderados por conversión (no solo similitud).
-- **Robustez**: redundancia de servicio y relleno por edad de la petición si la luz roja amenaza.
-- Medición del impacto real del embedding en el segmento frío con el evaluador offline de IPS (en cuanto
-  Evaluación lo tenga, es la comparación "con vecinos" vs "populares globales").
+## 7. Qué haríamos con más tiempo (honesto, priorizado)
+
+1. **Reordenar con LightGBM** sobre los mismos candidatos y features (features por atributos: subcategoría,
+   marca, cubo de precio, similitud del embedding con la sesión, tendencia). Los ganadores de OTTO/RecSys
+   hacen exactamente esto en dos etapas — pero solo cuando los peldaños simples están medidos.
+2. **Aprendizaje online de pocos parámetros** (Thompson descontado sobre λ de precio y η de tendencia): en
+   la final hay ~21.600 peticiones y ~430 compras — no hay señal para aprender 5.000 brazos.
+3. **Prueba A/B de hipótesis del modelo oculto** (misma subcategoría vs precio vs re-visita) por hash de
+   user_id — la señal más valiosa y más barata.
+4. **Redirección al panel**: alertas automáticas del dashboard (caída de conversión, subida de fallbacks)
+   para reaccionar en la final sin vigilar manualmente.
+
+---
+
+### Apéndice · plan de la demo (sábado noche / domingo tarde)
+
+- 1 min: problema + escalera (diapositiva 2).
+- 2 min: dashboard en directo sobre `feedback` real (diapositiva 3): conversión de nuestra versión vs
+  baseline en la última hora y decisión que tomamos con ello.
+- 1 min: producto nuevo creado hoy → vecinos por descripción en `scratch` (demo del cold start).
+- 1 min: cómo validamos (diapositiva 4) + qué medimos del stream (diapositiva 5).
+- Cierre: uso de RawTree (diapositiva 6) + lo que falta por hacer.
+
+**Revisión con el equipo: punto de control de las 21:00.** Dueño: Artai (Datos y relato).
+Fuentes de "resultados" cuando llenemos los PENDIENTE: `docs/EXPERIMENTOS.md` (offline, Alex) y
+`team_29.feedback` (en vivo, Lester/Operador).

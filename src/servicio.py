@@ -28,7 +28,7 @@ import time
 import zlib
 from pathlib import Path
 
-from src import catalogo, coldstart, covisitas, ranking, tendencias, usuarios
+from src import catalogo, coldstart, covisitas, eleccion, ranking, tendencias, usuarios
 from src.estado import Estado, por_categoria
 from src.rawtree import TEAM, insertar, query
 from src.validar import errores_respuesta
@@ -76,6 +76,11 @@ confirman que en vivo no hay recompras.
 A/B actual (sáb 17:30): C · CF · MF · MTF. "_filtrar_comprados" quita de los disponibles de ESE comprador lo que ya compró
 (sirve igual para las reglas y para el modelo, que si no lo pondría arriba).
 Desde sáb 17:36: CF 3/4 (arrancó 1,58 % vs C 1,00 %, 205 pet.) y C 1/4 de control. MF/MTF fuera hasta reentrenar R5."""
+
+
+MODELO_ELECCION = eleccion.Modelo.cargar()
+"""e-samen-v2 (src/eleccion.py). Necesita data/eleccion.json (python -m src.eleccion). Si falta, la variante
+"_eleccion" falla en cada petición y el servicio responde con los populares (nunca se queda sin responder)."""
 
 
 def variante(peticion: dict) -> tuple[str, dict]:
@@ -215,7 +220,10 @@ def respuesta_segura(peticion: dict, estado: Estado, mv: str) -> tuple[dict, boo
         if any(params.get(k) for k in vaciar):
             estado = dataclasses.replace(estado, **{campo: {} for k, campo in vaciar.items() if params.get(k)})
             params = {k: v for k, v in params.items() if k not in vaciar}
-        items = ranking.recommend(peticion, estado, params)
+        if params.get("_eleccion"):
+            items = eleccion.recomendar(peticion, estado, MODELO_ELECCION, filtrar_comprados=params.get("_filtrar", True))
+        else:
+            items = ranking.recommend(peticion, estado, params)
         if not errores_respuesta(items, disponibles):
             return {"request_id": peticion["request_id"], "items": items, "model_version": mv}, False
     except Exception as e:

@@ -74,22 +74,20 @@ RELLENO_REORDENADO = 30
 CANDIDATOS_POR_FUENTE = 40
 """R5. Con usar_modelo, cuántos candidatos se toman de cada fuente antes de que el modelo los ordene."""
 
-FRIO_HISTORIAL = 1.2
-"""Frio con historial (sáb ~18:00, medido): el 93,7 % de los compradores SIN vistas ya compró antes, y el
-100 % de las compras frías del test son RECOMPRAS de algo que ya habían comprado (el modelo oculto lo premia:
-anuncio de los organizadores de las 17:40). Con este parámetro, a un comprador sin vistas se le siembran las
-co-visitas de sus productos comprados y cada producto comprado se empuja 1,2× el mejor candidato sembrado,
-para que las recompras encabecen la lista (los equipos punteros convierten 3× más en el segmento frío).
-Ajustable en el A/B (params={"frio_historial": 0.0} lo apaga)."""
+FRIO_HISTORIAL = 0.0
+"""Frío con historial (idea de Artai, sáb ~18:00): a un comprador SIN vistas pero con compras previas, sembrar las
+co-visitas de lo que compró y empujar lo ya comprado (valor × el mejor candidato). APAGADO hasta medirlo.
+Lo medido en vivo (API del leaderboard, sáb 17:03-18:03): en fríos, C (sin filtro de comprados) 1,73 % frente a
+CF (con filtro) 1,41 % → la recompra parece ayudar un poco SOLO en fríos; pero M (lo comprado arriba para todos)
+0,47 % → empujarla fuerte hunde la conversión."""
 
 PARAMS: dict = {"decaimiento": DECAIMIENTO, "revisitas": REVISITAS, "afin_sub": AFIN_SUB,
                 "afin_marca": AFIN_MARCA, "normalizar_fila": NORMALIZAR_FILA,
                 "precio_coherente": PRECIO_COHERENTE, "lambda_precio": LAMBDA_PRECIO,
                 "usar_vecinos": False, "usar_contexto": False, "tendencia": TENDENCIA,
-                "usar_modelo": False, "filtrar_comprados": False, "frio_historial": FRIO_HISTORIAL}
-"""filtrar_comprados = False desde el sáb 17:40: medido tres veces (offline 0,86 -> 0,32 con el filtro;
-en vivo CF 1,19 vs C 1,02; y los organizadores confirmaron que el modelo oculto premia recomprar).
-"""
+                "usar_modelo": False, "filtrar_comprados": True, "frio_historial": FRIO_HISTORIAL}
+"""filtrar_comprados: quitar lo ya comprado. En vivo (API, 1 h, ~2.800 pet./brazo) CF (CON filtro) 1,06 % vs C
+(sin filtro) 1,02 %: en total, empate. Se deja encendido (lo que corre en vivo con más tráfico). OJO: CF = CON filtro."""
 """usar_modelo (R5): los 10 los elige la regresión logística de src/puntuacion.py en vez de la suma de puntos.
 Necesita data/puntuacion.json (python -m src.puntuacion); si no existe, se ignora. En este modo NO se quita lo ya
 comprado: el modelo aprendió que haberlo comprado antes SUBE la probabilidad de compra (×1,83). APAGADO."""

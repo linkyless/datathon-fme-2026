@@ -61,6 +61,7 @@ docs/DECISIONES.md   docs/EXPERIMENTOS.md
 docs/CONTEXTO.md     ← todo lo ocurrido antes de empezar a programar (léelo una vez)
 docs/apertura.md     ← lo que dijeron las diapositivas oficiales (baseline, pistas)
 docs/competencia.md  ← fotos del leaderboard y lo que enseñan · docs/deep_research.md ← prompt de investigación
+docs/investigacion.md ← RESULTADO del deep research: la estrategia del equipo sale de aquí (con fuentes)
 .githooks/pre-commit ← bloquea commits con claves o datos
 .claude/skills/rawtree/ ← skill OFICIAL de RawTree para agentes (no la edites)
 ```

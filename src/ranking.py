@@ -27,8 +27,13 @@ NOMBRE = "v0-categoria"
 DECAIMIENTO = 0.7
 """Peso de cada vista hacia atrás: la última vale 1, la anterior 0.7, la otra 0.49..."""
 
+PARAMS: dict = {"decaimiento": DECAIMIENTO}
+"""Parámetros por defecto. Las variantes A/B (src/servicio.py, Operador) pasan otro diccionario con las mismas
+claves: así se prueban variantes en vivo sin tocar este archivo. Cada clave nueva se añade aquí con su valor."""
 
-def recommend(peticion: dict, estado: Estado) -> list[str]:
+
+def recommend(peticion: dict, estado: Estado, params: dict | None = None) -> list[str]:
+    p = {**PARAMS, **(params or {})}
     ya_comprado = estado.comprados.get(str(peticion.get("user_id", "")), set())
 
     def vale(pid: str) -> bool:
@@ -40,13 +45,13 @@ def recommend(peticion: dict, estado: Estado) -> list[str]:
     # 1) Co-visitas de lo que ha visto (lo más reciente pesa más).
     for k, pid in enumerate(reversed(vistos)):
         for pos, (otro, peso) in enumerate(estado.covisitas.get(pid, [])):
-            puntos[otro] += (DECAIMIENTO ** k) * peso / (pos + 1)
+            puntos[otro] += (p["decaimiento"] ** k) * peso / (pos + 1)
 
     # 2) Productos nuevos (sin co-visitas): usar los de descripción parecida.
     for k, pid in enumerate(reversed(vistos)):
         if pid not in estado.covisitas:
             for pos, otro in enumerate(estado.vecinos.get(pid, [])):
-                puntos[otro] += 0.5 * (DECAIMIENTO ** k) / (pos + 1)
+                puntos[otro] += 0.5 * (p["decaimiento"] ** k) / (pos + 1)
 
     elegidos = [pid for pid, _ in puntos.most_common() if vale(pid)][:10]
 

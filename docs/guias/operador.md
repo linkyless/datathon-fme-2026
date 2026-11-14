@@ -48,6 +48,8 @@ Pega esto a tu agente (usa plan mode, Shift+Tab):
 > 6. `model_version` = `ranking.NOMBRE + "-" + hash corto del commit`.
 > 7. Opción `--sin-envio`: hace todo menos el push; imprime cuántas respuestas enviaría y la latencia.
 > 8. Cada 10 s imprime una línea: respondidas, inválidas sustituidas y latencia p95 en ms.
+> 9. Si calcular un lote tarda más de 1 s, envía para las que falten los populares (siempre válidos). Mejor un
+>    fallback a tiempo que una respuesta buena tarde (docs/investigacion.md, punto 10).
 > Pruébalo SOLO con `python -m src.servicio --sin-envio` durante 2 minutos. No lo lances sin esa opción.
 
 **Hecho cuando:** `--sin-envio` corre 5 minutos sin errores, 0 inválidas y p95 < 1.000 ms. Commit y push.
@@ -77,5 +79,28 @@ la versión que ha entrado. Si algo va mal: Ctrl+C y relanza el baseline en su c
 
 ---
 
-## Fase 2 (tras el deep research)
-_Vacío. Se rellenará con las conclusiones del deep research. No empezar nada de aquí hasta que esté escrito._
+## Fase 2 (del deep research: docs/investigacion.md, puntos 1, 9 y 10)
+
+**O6 · Pruebas A/B en vivo (sáb tarde, en cuanto el servicio esté estable).** El informe propone la prueba más
+valiosa de todo el plan: servir a la vez varias variantes y ver cuál vende más con compradores reales.
+> Añade a src/servicio.py un reparto A/B: según hash(user_id) % N, cada comprador recibe siempre la misma variante.
+> Cada variante es un diccionario de `ranking.PARAMS` y un model_version propio (p. ej. `v2-revisitas-A`,
+> `v2-revisitas-B`). Las variantes se definen en un diccionario al principio del archivo.
+Primera prueba que recomienda el informe: (a) misma subcategoría por popularidad, (b) lo mismo ordenado por
+precio, (c) re-visitas primero. Alex lo lee con su panel (E7).
+
+**O7 · Exploración registrada (sáb noche).** En los slots 8-10 (los que casi nadie mira, así que cuesta poco),
+a veces enseñamos algo "incierto" (producto nuevo, tendencia emergente) para aprender de él. Clave: **guardar con
+qué probabilidad se eligió** cada producto explorado (en team_29.scratch). Así podremos evaluar con nuestro propio
+log y contárselo al jurado.
+
+**O8 · Thompson sampling descontado (dom madrugada).** Lo mismo que UCT en MCTS, pero entre pocas variantes: cada
+una tiene una distribución Beta de su tasa de éxito; en cada petición se muestrea y gana la mejor; lo antiguo se
+olvida poco a poco (γ ≈ 0,999) para adaptarse a cambios. Sustituye al reparto fijo de O6 cuando haya 2-4 variantes
+buenas. Pocas variantes, nunca un "brazo" por producto: en la final no hay datos para tanto.
+
+**O9 · Endurecer (dom 06:00-08:00).** Prueba de carga a 10 peticiones/s, simulacro de "RawTree no responde
+durante 1 minuto" (debe seguir enviando populares) y latencia p99.
+
+Nota: el informe sugiere vistas materializadas de ClickHouse, pero el pie de la web de RawTree dice
+*"No schema. No indexes. No materialized views."*: probablemente no existen. Precalculamos en Python y en scratch.

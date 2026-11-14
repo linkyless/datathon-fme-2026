@@ -1,7 +1,7 @@
 # Estado de Lester
 
 - **Rol:** Operador (docs/guias/operador.md)
-- **Actualizado:** sáb 17:45
+- **Actualizado:** sáb 18:05
 
 ## Haciendo ahora
 - O4: vigilar el servicio en vivo. **EN VIVO desde 17:35: `e-samen-v1-C` (1/4 del tráfico) y `e-samen-v1-CF` (3/4).**
@@ -10,6 +10,20 @@
   - Ventana propia "EN VIVO e-samen-v1 (C 1/4, CF 3/4)". Log en `logs/servicio.log`.
 - **Desde ahora, CONGELADO**: no se reinicia ni se cambia el modelo en vivo sin medición de Evaluación (Alex).
   Lo de esta tarde (5 cambios en vivo sin revisión) no se repite.
+
+## Plan del equipo para esta noche (acordado sáb 18:05) — objetivo: pasar del ~1,2 % a > 2 %
+Medido (3.530 compras del carrusel tras el 2026-11-07, comparadas con lo último visto):
+- 97,6 % son de la MISMA CATEGORÍA que lo último visto → la categoría ya la acertamos.
+- Dentro de la categoría: misma subcategoría 34 % (azar ~11 %), misma marca 22 %, y **precio ×0,55** (mediana)
+  frente a lo visto y ×0,53 frente al precio habitual del comprador → se compra lo MÁS BARATO de lo afín.
+- R5 aprendió "caro = mejor" (sesgo del carrusel antiguo) y `ya_comprado` ×1,8 (en vivo no existe): por eso falló.
+Reparto (nada va en vivo sin la medición de Alex):
+| Persona | Tarea | Para |
+|---|---|---|
+| Artai | Señales en SQL (RawTree) → Estado: perfil por comprador (top categorías/subcategorías/marcas, precio mediano; history_events + shop.events) y por producto la tasa de compra cuando se enseñaba (history_sessions, arrayJoin de shown/propensity, corregida por propensity). `cargar_perfiles(hasta)` en coldstart.py | ~19:30 |
+| Leonardo | R6 = LightGBM (árbol del deep research): señales de R5 SIN `ya_comprado` + precio/precio de lo visto + precio/precio habitual + señales de Artai. Entrenar sin filas de recompras | ~20:30 |
+| Alex | Test offline sin recompras; medir R6 contra CF (la puerta para ir en vivo) | al llegar R6 |
+| Lester | Red estable (hotspot/cable); servicio listo para cargar R6 rápido; probarlo en `--sin-envio` | ~21:00 |
 
 ## Terminado
 - **A/B en vivo de la tarde** (números del leaderboard, ventana 16:39-17:39; todo orientativo, < 3.000 peticiones):

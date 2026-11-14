@@ -1,12 +1,13 @@
 # Estado de Lester
 
 - **Rol:** Operador (docs/guias/operador.md)
-- **Actualizado:** sáb 14:00
+- **Actualizado:** sáb 14:10
 
 ## Haciendo ahora
-- O3: relevo del baseline a `src/servicio.py` (pendiente de decidir la hora).
+- O4: vigilar el servicio en vivo. Pendiente: 2 hilos de envío (el envío tarda hasta 1 s y los lotes esperan en cola).
 
 ## Terminado
+- O3: relevo a las 14:08:23. EN VIVO `e-samen-v0-6804453` (`python -m src.servicio`, en su propia ventana). 0 duplicados. El baseline del starter está PARADO.
 - O2: `src/servicio.py` hecho. Prueba `--sin-envio` 60 s: 186 respondidas (~3,1/s), 0 sustituidas, 0 fallos de sondeo; edad de las peticiones al verlas p50 ≈ 300-420 ms, p95 ≈ 0,46-1,2 s (tras el primer arranque).
 - O1: `src/catalogo.py` probado contra RawTree. 5.100 productos, 5.064 disponibles, 36 agotados/inactivos. Los 10 populares disponibles coinciden EXACTAMENTE con lo que envía el baseline en vivo. `construir()` tarda ~3,4 s. `v0-categoria` sobre 200 peticiones reales: 0,8 ms/petición, 0 inválidas, 158 de 200 distintas del baseline.
 - Clave de RawTree recogida (team_29) y probada.

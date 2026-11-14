@@ -13,3 +13,4 @@ Una fila por medición. Solo números que salgan de código ejecutado. `model_ve
 | Hora | Quién | model_version | Qué cambia | hit_rate@10 | SNIPS slot 1 | slot1_matches | Leaderboard | Notas |
 |---|---|---|---|---|---|---|---|---|
 | | | baseline | starter kit oficial | | | | | |
+| Sáb 14:09 | Lester | e-samen-v0-6804453 | EN VIVO desde 14:08:23 (relevo del baseline) | | | | pendiente (actualiza cada 10 min) | Primer minuto: 100 % servido por nosotros (75/75), latencia p50 1.172 ms, p95 1.899 ms (baseline: 1.238 / 2.232). 0 duplicados |

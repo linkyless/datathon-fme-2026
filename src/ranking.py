@@ -28,9 +28,11 @@ nunca lo que hace (los demás equipos lo leerían). Qué es cada versión se apu
 DECAIMIENTO = 0.7
 """Peso de cada vista hacia atrás: la última vale 1, la anterior 0.7, la otra 0.49..."""
 
-PARAMS: dict = {"decaimiento": DECAIMIENTO}
+PARAMS: dict = {"decaimiento": DECAIMIENTO, "usar_vecinos": False, "usar_contexto": False}
 """Parámetros por defecto. Las variantes A/B (src/servicio.py, Operador) pasan otro diccionario con las mismas
-claves: así se prueban variantes en vivo sin tocar este archivo. Cada clave nueva se añade aquí con su valor."""
+claves: así se prueban variantes en vivo sin tocar este archivo. Cada clave nueva se añade aquí con su valor.
+usar_vecinos / usar_contexto: piezas de Artai (D3, D4). APAGADAS hasta que Evaluación o un A/B digan que suben:
+sin interruptor, un simple reinicio del servicio cambiaría el modelo en vivo sin medirlo."""
 
 
 def recommend(peticion: dict, estado: Estado, params: dict | None = None) -> list[str]:
@@ -49,7 +51,7 @@ def recommend(peticion: dict, estado: Estado, params: dict | None = None) -> lis
             puntos[otro] += (p["decaimiento"] ** k) * peso / (pos + 1)
 
     # 2) Productos nuevos (sin co-visitas): usar los de descripción parecida.
-    for k, pid in enumerate(reversed(vistos)):
+    for k, pid in enumerate(reversed(vistos) if p["usar_vecinos"] else []):
         if pid not in estado.covisitas:
             for pos, otro in enumerate(estado.vecinos.get(pid, [])):
                 puntos[otro] += 0.5 * (p["decaimiento"] ** k) / (pos + 1)
@@ -62,7 +64,8 @@ def recommend(peticion: dict, estado: Estado, params: dict | None = None) -> lis
     ultima_categoria = str(estado.catalogo.get(vistos[-1], {}).get("category", "")) if vistos else ""
     de_su_categoria = estado.populares_categoria.get(ultima_categoria, [])
     ctx = peticion.get("context") or {}
-    por_contexto = estado.populares_contexto.get((str(ctx.get("device", "")), str(ctx.get("region", ""))), [])
+    por_contexto = (estado.populares_contexto.get((str(ctx.get("device", "")), str(ctx.get("region", ""))), [])
+                    if p["usar_contexto"] else [])
     for fuente in (de_su_categoria, por_contexto, estado.populares, sorted(estado.disponibles)):
         for pid in fuente:
             if len(elegidos) == 10:

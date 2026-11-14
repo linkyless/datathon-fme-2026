@@ -104,25 +104,39 @@ VARIANTES_AP: list[tuple[str, dict]] = [
 el brazo responde como C y esas respuestas se etiquetan "-C" (así la fila -AP2 solo tiene aprendiz de verdad).
 -AP (20:38-20:51) mezclaba 4 min "como C" con aprendiz: por eso se renombró a -AP2."""
 
+VARIANTES_AP3: list[tuple[str, dict]] = [
+    ("-AP3", {"_aprendiz": "ap3"}),                        # 1/2: aprendiz reentrenado (AP3), sin explorar
+    ("-EXP1", {"_aprendiz": "ap3", "_explorar": True}),    # 1/2: AP3 explorando (huecos 9-10) en la mitad de peticiones
+]
+"""A/B sáb 22:00 (`--ap3`): AP3 frente a AP3 + exploración. En -EXP1 explora la mitad de las peticiones (elegidas por el
+request_id, `aprendiz.toca_explorar`): esas salen etiquetadas "-EXP1x" y la otra mitad "-EXP1" (igual que AP3). Así el
+leaderboard da el coste de explorar (EXP1x frente a AP3) y el feedback de EXP1x sirve para reentrenar con productos
+nuevos y fuera de las listas de mejores."""
+
 MUNDO: "aprendiz.Mundo | None" = None
-MODELO_APRENDIZ: "aprendiz.Modelo | None" = None
+MODELOS_APRENDIZ: dict = {}
+"""nombre del entreno (None = data/aprendiz.json, "ap3" = data/aprendiz_ap3.json) -> Modelo."""
 
 
 def preparar_aprendiz(estado: Estado, parar: threading.Event) -> None:
-    """Hilo propio: carga el Mundo (historial + eventos de hoy) y lo pone al día cada 1,5 s. Nunca toca el stock."""
-    global MUNDO, MODELO_APRENDIZ
+    """Hilo propio: carga los modelos que piden las variantes y el Mundo (historial + eventos de hoy), y lo pone al
+    día cada 1,5 s. Nunca toca el stock. Mientras falte algo, esos brazos responden como C (etiquetados -C)."""
+    global MUNDO
+    nombres = {(None if p["_aprendiz"] is True else p["_aprendiz"]) for _, p in VARIANTES if p.get("_aprendiz")}
     while not parar.is_set() and MUNDO is None:
         try:
             t = time.monotonic()
-            modelo = aprendiz.Modelo.cargar()
-            if modelo is None:  # se activa solo en cuanto exista (python -m src.aprendiz lo crea)
-                log("aprendiz: aún no hay data/aprendiz.json; el brazo -AP responde como C (reintento en 30 s)")
+            modelos = {n: aprendiz.Modelo.cargar(n) for n in nombres}
+            faltan = [str(n or "aprendiz") for n, m in modelos.items() if m is None]
+            if faltan:  # se activa solo en cuanto existan (python -m src.aprendiz [--nombre X] los crea)
+                log(f"aprendiz: faltan los modelos {faltan}; esos brazos responden como C (reintento en 30 s)")
                 parar.wait(30)
                 continue
             mundo = aprendiz.Mundo.al_dia(estado.catalogo)
-            MODELO_APRENDIZ = modelo
+            MODELOS_APRENDIZ.update(modelos)
             MUNDO = mundo
-            log(f"aprendiz listo en {time.monotonic() - t:.1f} s ({len(mundo.comprados)} compradores con compras)")
+            log(f"aprendiz listo en {time.monotonic() - t:.1f} s ({len(mundo.comprados)} compradores con compras; "
+                f"modelos {sorted(str(n or 'aprendiz') for n in modelos)})")
         except Exception as e:
             log(f"aprendiz: no se pudo cargar el Mundo (reintento en 30 s): {e}")
             parar.wait(30)
@@ -285,9 +299,13 @@ def respuesta_segura(peticion: dict, estado: Estado, mv: str) -> tuple[dict, boo
             estado = dataclasses.replace(estado, **{campo: {} for k, campo in vaciar.items() if params.get(k)})
             params = {k: v for k, v in params.items() if k not in vaciar}
         if params.get("_aprendiz"):
-            if MUNDO is not None and MODELO_APRENDIZ is not None:
-                items = aprendiz.recomendar(peticion, MUNDO, MODELO_APRENDIZ, disponibles)
+            modelo = MODELOS_APRENDIZ.get(None if params["_aprendiz"] is True else params["_aprendiz"])
+            if MUNDO is not None and modelo is not None:
+                explorar = bool(params.get("_explorar"))
+                items = aprendiz.recomendar(peticion, MUNDO, modelo, disponibles, explorar=explorar)
                 if not errores_respuesta(items, disponibles):
+                    if explorar and aprendiz.toca_explorar(peticion.get("request_id") or ""):
+                        mv += "x"  # la mitad que explora, con su propia fila en el leaderboard
                     return {"request_id": peticion["request_id"], "items": items, "model_version": mv}, False
             params = _V0  # aún sin Mundo (o respuesta rara): como C, y etiquetado como C
             mv = mv[: len(mv) - len(sufijo)] + "-C"
@@ -376,6 +394,7 @@ def main() -> None:
     ap.add_argument("--sin-envio", action="store_true", help="hace todo menos insertar en submissions")
     ap.add_argument("--relevo", action="store_true", help="prepararse y esperar Enter antes de empezar")
     ap.add_argument("--v2", action="store_true", help="usar VARIANTES_V2 (A/B C / V2 / V3, 1/3 cada uno)")
+    ap.add_argument("--ap3", action="store_true", help="usar VARIANTES_AP3 (AP3 frente a AP3 + exploración, 50/50)")
     ap.add_argument("--ap", action="store_true", help="usar VARIANTES_AP (C 1/4, aprendiz 3/4)")
     ap.add_argument("--duracion", type=float, default=0, help="segundos hasta pararse solo (0 = nunca)")
     args = ap.parse_args()
@@ -384,6 +403,8 @@ def main() -> None:
         VARIANTES = VARIANTES_V2
     if args.ap:
         VARIANTES = VARIANTES_AP
+    if args.ap3:
+        VARIANTES = VARIANTES_AP3
 
     mv = version_modelo()
     log(f"arrancando {mv} | equipo {TEAM} | {'SIN ENVÍO (prueba)' if args.sin_envio else 'EN VIVO'} | variantes {[v for v, _ in VARIANTES]}")

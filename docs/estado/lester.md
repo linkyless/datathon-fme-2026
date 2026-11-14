@@ -1,13 +1,14 @@
 # Estado de Lester
 
 - **Rol:** Operador (docs/guias/operador.md)
-- **Actualizado:** sáb 20:40
+- **Actualizado:** sáb 21:45
 
 ## Haciendo ahora
-- **EN VIVO desde 20:47: A/B `e-samen-v1-C` (1/4) frente a `e-samen-v1-AP2` (3/4)** (AP 20:38-20:47 no vale: mezclaba minutos como C) (`python -m src.servicio --ap`).
-  -AP = aprendiz de Alex (`src/aprendiz.py`). El servicio carga el Mundo en un hilo propio y lo pone al día cada 1,5 s;
-  hasta que existe `data/aprendiz.json` (`python -m src.aprendiz`) el brazo -AP responde como C.
-- A7 (árbol + CF fríos) queda fuera: fríos 1,25 frente a 1,93 de C (análisis de Alex/Fable).
+- **EN VIVO desde 21:43: A/B `e-samen-v1-AP3` (1/2) frente a `e-samen-v1-EXP1`/`-EXP1x` (1/2)** (`python -m src.servicio --ap3`).
+  AP3 = aprendiz de Alex reentrenado (`python -m src.aprendiz --nombre ap3` → `data/aprendiz_ap3.json`).
+  EXP1 = AP3 con exploración; la mitad que explora sale como -EXP1x. Coste de explorar: EXP1x frente a AP3.
+- Antes, AP2 frente a C (20:47-21:43): AP2 gana (Alex: compras reales 2,03 % frente a 0,83 %, IC [+0,56, +1,87]).
+- Pendiente: decidir lo de la nube (Railway, rama `produccion`).
 
 ## Plan del equipo para esta noche (acordado sáb 18:05) — objetivo: pasar del ~1,2 % a > 2 %
 Medido (3.530 compras del carrusel tras el 2026-11-07, comparadas con lo último visto):

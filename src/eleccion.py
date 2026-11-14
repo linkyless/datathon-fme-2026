@@ -192,6 +192,30 @@ def validar(filas, w, columnas=None) -> dict:
     return {"n": len(filas), "acierto_1": acierto / n, "acierto_top3": top3 / n, "logver": ll / n}
 
 
+# ---------------------------------------------------------------- categoría favorita (comprador frío)
+def cargar_categorias_usuario(hasta: str | None = None, horas_en_vivo: int = 24) -> dict[str, list[str]]:
+    """user_id -> sus 3 categorías con más eventos (vista, carrito, compra), de más a menos.
+
+    Medido (visitas al carrusel SIN vistas desde 2026-10-01, categoría enseñada frente a la actividad anterior del
+    comprador): su categoría nº 1 convierte 0,78-0,86 %, la nº 2 ~0,26 %, la nº 3 ~0,09 %, una sin actividad 0,03 %.
+    `hasta`: solo history_events anteriores (offline). None: todo el historial + shop.events de las últimas horas."""
+    from src.rawtree import query
+    filtro = f"WHERE e.ts::DateTime64(3) < '{hasta}'" if hasta else ""
+    vivo = "" if hasta else f"""UNION ALL SELECT user_id::String u, product_id::String pid FROM shop.events
+                                WHERE ts::DateTime64(3) > now() - INTERVAL {horas_en_vivo} HOUR"""
+    filas = query(f"""
+        SELECT u, cat FROM (
+          SELECT x.u u, c.category::String cat, count() n FROM (
+            SELECT e.user_id::String u, e.product_id::String pid FROM shop.history_events e {filtro} {vivo}
+          ) x JOIN shop.catalog c ON c.product_id::String = x.pid
+          GROUP BY u, cat ORDER BY u, n DESC, cat
+        ) LIMIT 3 BY u""", timeout=600)
+    salida: dict[str, list[str]] = {}
+    for f in filas:
+        salida.setdefault(f["u"], []).append(f["cat"])
+    return salida
+
+
 # ---------------------------------------------------------------- recomendar en vivo
 class Modelo:
     def __init__(self, w: np.ndarray, lc: dict[str, float], rango: dict[str, int]):
@@ -205,11 +229,13 @@ class Modelo:
         return cls(np.array(d["w"]), d["lc"], d["rango"])
 
 
-def recomendar(peticion: dict, estado, modelo: Modelo, filtrar_comprados: bool = True, n_frio: int = 300) -> list[str]:
+def recomendar(peticion: dict, estado, modelo: Modelo, filtrar_comprados: bool = True, n_frio: int = 300,
+               favoritas_frio: bool = False) -> list[str]:
     """Candidatos: todos los disponibles de la categoría de lo último visto (+ lo visto de esa categoría);
     a un comprador sin vistas, los n_frio mejores por calidad y popularidad. Se puntúan y se devuelven los 10 mejores."""
     cat = estado.catalogo
     vistos = [v["product_id"] for v in (peticion.get("recent_views") or []) if v.get("product_id")]
+    favoritas: list[str] = []
     ya = estado.comprados.get(str(peticion.get("user_id", "")), set()) if filtrar_comprados else set()
     disp = estado.disponibles
     if vistos:
@@ -219,10 +245,22 @@ def recomendar(peticion: dict, estado, modelo: Modelo, filtrar_comprados: bool =
         cand = [pid for pid in _por_categoria(estado).get(categoria, []) if pid in disp]
         cand += [pid for pid in reversed(vistos) if pid in disp and cat.get(pid, {}).get("category") == categoria]
     else:
-        cand = [pid for pid in _mejores_frio(estado, modelo, n_frio) if pid in disp]
+        favoritas = (getattr(estado, "categorias_usuario", {}).get(str(peticion.get("user_id", "")), [])
+                     if favoritas_frio else [])  # v3: APAGADO hasta medirlo (la v2 validada no lo lleva)
+        if favoritas:  # su categoría con más actividad (×8 frente a otra); la 2ª solo como reserva
+            por = _por_categoria(estado)
+            cand = [pid for c in favoritas[:2] for pid in por.get(c, []) if pid in disp]
+        else:
+            cand = [pid for pid in _mejores_frio(estado, modelo, n_frio) if pid in disp]
     cand = [pid for pid in dict.fromkeys(cand) if pid not in ya]
     s = senales(cand, vistos, cat, modelo.lc, modelo.rango) @ modelo.w
-    elegidos = [cand[i] for i in np.argsort(-s, kind="stable")[:10]]
+    if not vistos and favoritas:
+        orden_cat = {c: k for k, c in enumerate(favoritas[:2])}
+        claves = [(orden_cat.get(cat.get(pid, {}).get("category"), 9), -s[i]) for i, pid in enumerate(cand)]
+        orden = sorted(range(len(cand)), key=lambda i: claves[i])
+    else:
+        orden = np.argsort(-s, kind="stable")
+    elegidos = [cand[i] for i in orden[:10]]
     if len(elegidos) < 10:  # relleno: más vendidos de siempre (no se puntúan contra los de la categoría)
         elegidos += [pid for pid in estado.populares if pid in disp and pid not in ya and pid not in elegidos][:10 - len(elegidos)]
     return elegidos

@@ -64,9 +64,17 @@ VARIANTES: list[tuple[str, dict]] = [
     ("-CF", _CF),
 ]
 VARIANTES_V2: list[tuple[str, dict]] = [
-    ("-CF", _CF),                                         # control: lo que corre desde 17:35
-    ("-V2", {"_eleccion": True, "_filtrar": True}),       # e-samen-v2 quitando lo ya comprado
-    ("-V2N", {"_eleccion": True, "_filtrar": False}),     # e-samen-v2 sin quitarlo (en su sitio, no forzado arriba)
+    ("-A6", {"_combo": True}),
+]
+"""Decisión de Lester (sáb 19:40): la más fuerte se lo lleva todo (100 %, sin validar por Evaluación todavía).
+_combo = con vistas: árbol R6 de Leonardo (acierto del 1.º 38,4 % offline, v2 34,9 %, v0 33,7 %);
+sin vistas: su categoría favorita ordenada con la v2 (×8 de conversión en el historial). Lo comprado se quita."""
+"""Decisión de Lester (sáb 18:45): la más fuerte se lo lleva todo, sin reparto. Se compara con el baseline de la misma
+ventana del leaderboard y con CF de antes (~1,06 %)."""
+VARIANTES_V3: list[tuple[str, dict]] = [                  # PARA MÁS ADELANTE (fríos a su categoría favorita)
+    ("-CF", _CF),
+    ("-V3", {"_eleccion": True, "_filtrar": True, "_favoritas": True}),
+    ("-V3N", {"_eleccion": True, "_filtrar": False, "_favoritas": True}),
 ]
 """PREPARADO, NO EN VIVO: se activa con `python -m src.servicio --v2` cuando Evaluación dé el ok a la v2.
 Responde a la vez: ¿v2 > CF? y ¿hay que quitar lo ya comprado? (sin depender de lo que digan los organizadores)."""
@@ -190,9 +198,11 @@ def refrescar(estado: Estado, parar: threading.Event) -> None:
         estado.comprados = usuarios.cargar_comprados(None)
         estado.populares_contexto = coldstart.cargar_populares_contexto(None)
         estado.vecinos = coldstart.cargar_vecinos(None)
+        estado.categorias_usuario = eleccion.cargar_categorias_usuario(None)
+        estado.perfiles_comprador, estado.perfiles_producto = coldstart.cargar_perfiles(None)
         log(f"piezas pesadas cargadas en {time.monotonic() - t:.1f} s: covisitas={len(estado.covisitas)} "
             f"comprados={len(estado.comprados)} contexto={len(estado.populares_contexto)} "
-            f"vecinos={len(estado.vecinos)}")
+            f"vecinos={len(estado.vecinos)} categorias_usuario={len(estado.categorias_usuario)}")
 
     def bucle_lento() -> None:
         """Hilo aparte para lo que tarda (pesadas: 13 s con buena red, 90 s con mala; HelmCode: minutos si hay
@@ -227,8 +237,14 @@ def respuesta_segura(peticion: dict, estado: Estado, mv: str) -> tuple[dict, boo
         if any(params.get(k) for k in vaciar):
             estado = dataclasses.replace(estado, **{campo: {} for k, campo in vaciar.items() if params.get(k)})
             params = {k: v for k, v in params.items() if k not in vaciar}
-        if params.get("_eleccion"):
-            items = eleccion.recomendar(peticion, estado, MODELO_ELECCION, filtrar_comprados=params.get("_filtrar", True))
+        tiene_vistas = any(v.get("product_id") for v in (peticion.get("recent_views") or []))
+        if params.get("_combo") and tiene_vistas:
+            items = ranking.recommend(peticion, estado, {"usar_arbol": True, "filtrar_comprados": True})
+        elif params.get("_combo"):
+            items = eleccion.recomendar(peticion, estado, MODELO_ELECCION, filtrar_comprados=True, favoritas_frio=True)
+        elif params.get("_eleccion"):
+            items = eleccion.recomendar(peticion, estado, MODELO_ELECCION, filtrar_comprados=params.get("_filtrar", True),
+                                        favoritas_frio=params.get("_favoritas", False))
         else:
             items = ranking.recommend(peticion, estado, params)
         if not errores_respuesta(items, disponibles):
@@ -281,7 +297,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--sin-envio", action="store_true", help="hace todo menos insertar en submissions")
     ap.add_argument("--relevo", action="store_true", help="prepararse y esperar Enter antes de empezar")
-    ap.add_argument("--v2", action="store_true", help="usar VARIANTES_V2 (A/B CF / V2 / V2N)")
+    ap.add_argument("--v2", action="store_true", help="usar VARIANTES_V2 (A/B C / V2 / V3, 1/3 cada uno)")
     ap.add_argument("--duracion", type=float, default=0, help="segundos hasta pararse solo (0 = nunca)")
     args = ap.parse_args()
     global VARIANTES

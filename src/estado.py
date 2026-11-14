@@ -35,6 +35,9 @@ class Estado:
     """product_id -> [(otro_product_id, peso), ...] de mayor a menor peso. "Quien vio X vio/compró Y"."""
     comprados: dict[str, set[str]] = field(default_factory=dict)
     """user_id -> productos que ya compró (no se los volvemos a enseñar)."""
+    categorias_usuario: dict[str, list[str]] = field(default_factory=dict)
+    """user_id -> sus 3 categorías con más actividad (vistas + carrito + compras), de más a menos (src/eleccion.py).
+    Para el comprador SIN vistas: enseñarle su categoría favorita convierte ~8× más (0,78 % frente a 0,09 %)."""
     tendencias: dict[str, float] = field(default_factory=dict)
     """product_id -> lift (src/tendencias.py): >1 = más actividad que de costumbre en la última media hora."""
 

@@ -28,6 +28,8 @@ import time
 import zlib
 from pathlib import Path
 
+import numpy as np
+
 from src import aprendiz, catalogo, coldstart, covisitas, eleccion, ranking, tendencias, usuarios
 from src.estado import Estado, por_categoria
 from src.rawtree import TEAM, insertar, query
@@ -113,9 +115,36 @@ request_id, `aprendiz.toca_explorar`): esas salen etiquetadas "-EXP1x" y la otra
 leaderboard da el coste de explorar (EXP1x frente a AP3) y el feedback de EXP1x sirve para reentrenar con productos
 nuevos y fuera de las listas de mejores."""
 
+VARIANTES_AP4: list[tuple[str, dict]] = [
+    ("-AP3", {"_aprendiz": "ap3"}),                 # 1/3: AP3 tal cual (control)
+    ("-AP4", {"_aprendiz": "ap3", "_bono": 1.2}),   # 1/3: AP3 + bono moderado a lo suyo (ver recomendar_con_bono)
+    ("-AP5", {"_aprendiz": "ap3", "_bono": 3.0}),   # 1/3: bono fuerte: casi "lo suyo primero, ordenado por el modelo"
+]
+"""A/B/C (`--ap4`): mismos pesos (AP3); -AP4 y -AP5 suben lo suyo con dos fuerzas. Se lee en la API frente a -AP3."""
 MUNDO: "aprendiz.Mundo | None" = None
 MODELOS_APRENDIZ: dict = {}
 """nombre del entreno (None = data/aprendiz.json, "ap3" = data/aprendiz_ap3.json) -> Modelo."""
+
+
+def recomendar_con_bono(peticion: dict, mundo, modelo, disponibles: set[str], bono: float) -> list[str]:
+    """El aprendiz con una corrección a favor de "lo suyo" (carrito de hoy, visto en la sesión, carrito antiguo).
+
+    Por qué (medido sáb 23:30, fila en EXPERIMENTOS): en los MISMOS huecos, donde el modelo los puntúa parecido, un
+    producto suyo vende 3-5 veces más que uno sin relación (huecos 4-10: carrito antiguo de la categoría que mira
+    3,35 por 1.000 frente a 0,71), y aun así AP3 deja fuera de la lista ~4 productos suyos por petición. `bono` se
+    suma a la puntuación (escala logarítmica: 1,2 = ×3,3) de todo candidato con el que el comprador tiene relación.
+    Mismos candidatos, mismas señales y mismos pesos que `aprendiz.recomendar`; solo cambia el orden."""
+    u, vistos, nuevo = aprendiz._leer_peticion(peticion)
+    foto = mundo.foto(u)
+    comprados = foto["comprados"]
+    cand = aprendiz.candidatos(mundo, modelo, foto, vistos, lambda p: p in disponibles and p not in comprados)
+    if len(cand) < 10:
+        return aprendiz.recomendar(peticion, mundo, modelo, disponibles)
+    X = aprendiz.senales(mundo, foto, vistos, nuevo, cand)
+    i = aprendiz._I
+    suyo = (X[:, i["carrito_hoy"]] + X[:, i["visto_sesion"]] + X[:, i["carrito_antiguo"]]) > 0
+    s = X @ modelo.w + bono * suyo
+    return [cand[j] for j in np.argsort(-s, kind="stable")[:10]]
 
 
 def preparar_aprendiz(estado: Estado, parar: threading.Event) -> None:
@@ -302,7 +331,10 @@ def respuesta_segura(peticion: dict, estado: Estado, mv: str) -> tuple[dict, boo
             modelo = MODELOS_APRENDIZ.get(None if params["_aprendiz"] is True else params["_aprendiz"])
             if MUNDO is not None and modelo is not None:
                 explorar = bool(params.get("_explorar"))
-                items = aprendiz.recomendar(peticion, MUNDO, modelo, disponibles, explorar=explorar)
+                if params.get("_bono"):
+                    items = recomendar_con_bono(peticion, MUNDO, modelo, disponibles, params["_bono"])
+                else:
+                    items = aprendiz.recomendar(peticion, MUNDO, modelo, disponibles, explorar=explorar)
                 if not errores_respuesta(items, disponibles):
                     if explorar and aprendiz.toca_explorar(peticion.get("request_id") or ""):
                         mv += "x"  # la mitad que explora, con su propia fila en el leaderboard
@@ -396,6 +428,7 @@ def main() -> None:
     ap.add_argument("--v2", action="store_true", help="usar VARIANTES_V2 (A/B C / V2 / V3, 1/3 cada uno)")
     ap.add_argument("--ap3", action="store_true", help="usar VARIANTES_AP3 (AP3 frente a AP3 + exploración, 50/50)")
     ap.add_argument("--ap3-solo", action="store_true", help="todo el tráfico a AP3, sin exploración ni control")
+    ap.add_argument("--ap4", action="store_true", help="usar VARIANTES_AP4 (AP3 / bono 1,2 / bono 3,0 a lo suyo, a tercios)")
     ap.add_argument("--ap", action="store_true", help="usar VARIANTES_AP (C 1/4, aprendiz 3/4)")
     ap.add_argument("--duracion", type=float, default=0, help="segundos hasta pararse solo (0 = nunca)")
     args = ap.parse_args()
@@ -408,6 +441,8 @@ def main() -> None:
         VARIANTES = VARIANTES_AP3
     if args.ap3_solo:
         VARIANTES = [("-AP3", {"_aprendiz": "ap3"})]
+    if args.ap4:
+        VARIANTES = VARIANTES_AP4
 
     mv = version_modelo()
     log(f"arrancando {mv} | equipo {TEAM} | {'SIN ENVÍO (prueba)' if args.sin_envio else 'EN VIVO'} | variantes {[v for v, _ in VARIANTES]}")

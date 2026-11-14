@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from src import catalogo, coldstart, covisitas, usuarios
+from src import catalogo, coldstart, covisitas, tendencias, usuarios
 
 
 @dataclass
@@ -35,6 +35,8 @@ class Estado:
     """product_id -> [(otro_product_id, peso), ...] de mayor a menor peso. "Quien vio X vio/compró Y"."""
     comprados: dict[str, set[str]] = field(default_factory=dict)
     """user_id -> productos que ya compró (no se los volvemos a enseñar)."""
+    tendencias: dict[str, float] = field(default_factory=dict)
+    """product_id -> lift (src/tendencias.py): >1 = más actividad que de costumbre en la última media hora."""
 
     # --- Datos y relato (src/coldstart.py) ---
     populares_contexto: dict[tuple[str, str], list[str]] = field(default_factory=dict)
@@ -64,6 +66,7 @@ def construir(hasta: str | None = None) -> Estado:
         populares_categoria=por_categoria(cat, pop),
         covisitas=covisitas.cargar_covisitas(hasta),
         comprados=usuarios.cargar_comprados(hasta),
+        tendencias=tendencias.cargar_tendencias(hasta),
         populares_contexto=coldstart.cargar_populares_contexto(hasta),
         vecinos=coldstart.cargar_vecinos(hasta),
     )

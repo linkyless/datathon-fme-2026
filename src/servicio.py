@@ -28,7 +28,7 @@ import time
 import zlib
 from pathlib import Path
 
-from src import catalogo, coldstart, covisitas, ranking, usuarios
+from src import catalogo, coldstart, covisitas, ranking, tendencias, usuarios
 from src.estado import Estado, por_categoria
 from src.rawtree import TEAM, insertar, query
 from src.validar import errores_respuesta
@@ -55,8 +55,13 @@ HILOS_ENVIO = 3
 """Trabajadores de envío en paralelo (medido: un insert tarda 0,3-1 s)."""
 _CANDADO = threading.Lock()
 
-VARIANTES: list[tuple[str, dict]] = [("-C", {"_sin_covisitas": True, "_sin_comprados": True}),
-                                     ("-E", {"_sin_covisitas": True, "_sin_comprados": True, "revisitas": 0.3})]
+_V0 = {"_sin_covisitas": True, "_sin_comprados": True}
+VARIANTES: list[tuple[str, dict]] = [
+    ("-C", _V0),                                          # v0: populares de su categoría
+    ("-T", {**_V0, "tendencia": 0.5}),                    # v0 + tendencias de la última media hora
+    ("-M", {"usar_modelo": True}),                        # R5: la regresión logística elige y ordena
+    ("-MT", {"usar_modelo": True, "tendencia": 0.5}),     # R5 + tendencias
+]
 """Reparto A/B (tarea O6). Cada comprador cae SIEMPRE en la misma variante: hash(user_id) % len(VARIANTES).
 Cada variante = (sufijo del nombre, params para ranking.recommend). Ejemplo para probar re-visitas:
     VARIANTES = [("-A", {}), ("-B", {"revisitas": True})]   ->  e-samen-v2-A y e-samen-v2-B en el leaderboard
@@ -64,7 +69,8 @@ Con una sola variante ("", {}) todo el mundo recibe lo mismo y el nombre no llev
 Claves especiales (las aplica el servicio, no ranking): "_sin_covisitas" y "_sin_comprados" vacían esa pieza del Estado.
 A/B 16:41-16:55: A = v1 sin co-visitas, B = v1 completa (las dos con filtro de comprados: A no era la v0).
 A/B 16:51-17:10: C = v0 real · D = co-visitas sin filtro -> D pierde (0,78 % vs 1,00 %).
-A/B actual (sáb 17:10): C = v0 real · E = C + re-visitas (lo ya visto arriba). Única diferencia: re-visitas."""
+A/B 17:06-17:20: C vs E (re-visitas) -> E por debajo (0,74 % vs 0,97 %, 458 pet.).
+A/B actual (sáb 17:20): 2×2 = {v0, modelo R5} × {sin, con tendencias}. Cada brazo, 1/4 del tráfico."""
 
 
 def variante(peticion: dict) -> tuple[str, dict]:
@@ -158,6 +164,9 @@ def refrescar(estado: Estado, parar: threading.Event) -> None:
         if n:
             ultimo["pesadas"] = -1e9  # recargar vecinos enseguida con los nuevos embeddings
 
+    def tend() -> None:
+        estado.tendencias = tendencias.cargar_tendencias(None)
+
     def pesadas() -> None:  # co-visitas, compras, cold start: tardan, pero no bloquean nada
         t = time.monotonic()
         estado.covisitas = covisitas.cargar_covisitas(None)
@@ -173,6 +182,7 @@ def refrescar(estado: Estado, parar: threading.Event) -> None:
         429). Así el stock se sigue actualizando cada segundo pase lo que pase aquí."""
         while not parar.is_set():
             intentar("pesadas", 1800, pesadas)
+            intentar("tendencias", 90, tend)
             intentar("nuevos", 300, nuevos)
             parar.wait(1)
 

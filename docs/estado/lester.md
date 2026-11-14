@@ -1,15 +1,17 @@
 # Estado de Lester
 
 - **Rol:** Operador (docs/guias/operador.md)
-- **Actualizado:** sáb 18:05
+- **Actualizado:** sáb 18:55
 
 ## Haciendo ahora
-- O4: vigilar el servicio en vivo. **EN VIVO desde 17:35: `e-samen-v1-C` (1/4 del tráfico) y `e-samen-v1-CF` (3/4).**
-  - C = v0: más vendidos de la categoría de lo último visto (relleno: más vendidos de siempre).
-  - CF = C quitando, para cada comprador, lo que ya compró (`_filtrar_comprados` en `src/servicio.py`).
-  - Ventana propia "EN VIVO e-samen-v1 (C 1/4, CF 3/4)". Log en `logs/servicio.log`.
-- **Desde ahora, CONGELADO**: no se reinicia ni se cambia el modelo en vivo sin medición de Evaluación (Alex).
-  Lo de esta tarde (5 cambios en vivo sin revisión) no se repite.
+- **EN VIVO desde 18:51: `e-samen-v1-A6` al 100 %** (`python -m src.servicio --v2`, ventana "EN VIVO e-samen A6").
+  Decisión de Lester: la versión más fuerte se lo lleva todo, sin reparto y sin validar todavía por Evaluación.
+  - Con vistas (2/3): árbol R6 de Leonardo (`ranking.recommend(..., {"usar_arbol": True})`).
+  - Sin vistas (1/3): su categoría favorita (`eleccion.cargar_categorias_usuario`) ordenada con la v2.
+  - Lo ya comprado se quita. Antes de reiniciar en otra máquina: `pip install -r requirements.txt`,
+    `python -m src.eleccion` y `python -m src.arbol` (crean data/eleccion.json y data/arbol.*).
+- Comparar con CF de antes (~1,06 %) y con el baseline de la misma ventana (API del leaderboard).
+- Red: hotspot del móvil (a ratos también pierde paquetes).
 
 ## Plan del equipo para esta noche (acordado sáb 18:05) — objetivo: pasar del ~1,2 % a > 2 %
 Medido (3.530 compras del carrusel tras el 2026-11-07, comparadas con lo último visto):

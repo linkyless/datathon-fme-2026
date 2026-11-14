@@ -1,7 +1,11 @@
 """Lo que sabemos de cada comprador. Dueño: Ranking.
 
-Por ahora una sola cosa: qué ha comprado ya cada usuario. La pista oficial dice que quien ya compró un producto
-suele no quererlo otra vez, así que `ranking.recommend()` no se lo vuelve a enseñar.
+Por ahora una sola cosa: qué ha comprado ya cada usuario, para poder filtrarlo en `recommend()`.
+OJO (medición de Evaluación, sáb 14/11): el 61,6 % de las compras del tramo de test son productos que
+el usuario YA HABÍA comprado — la pista oficial ("quien ya compró no lo quiere otra vez") NO se cumple
+ahí, y el filtro hundía el purchase_hit de 0,86 a 0,32. Por eso el filtro se maneja como parámetro
+(interruptor en el servicio / variantes A/B) y no como regla fija: si queda apagado, este campo
+no añade score y su refresco solo sirve para poder encenderlo y medirlo.
 """
 from __future__ import annotations
 

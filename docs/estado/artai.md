@@ -5,6 +5,8 @@
 
 ## Haciendo ahora
 - Presentación + panel Tukey listos; pidiendo números a Evaluación y resultados en vivo para rellenar los **[PENDIENTE]** de docs/presentacion.md.
+- **Arreglo tras la medición de Alex (sáb ~15:30)**: `populares_contexto` ahora lleva los 20 populares generales DELANTE y lo específico del (device, region) detrás (commit `2ed6420`). Así el relleno de fríos no puede rendir peor que los populares de siempre (medido: 0,60) y se conserva la señal de contexto para la cola. Alex: remédelo cuando quieras.
+- **Vecinos no hace falta apagarlos**: `ranking.py` ya solo los usa para productos SIN co-visitas (paso 2). El desastre 0,76→0,05 era por co-visitas vacío, no por los vecinos. Con co-visitas de Leonardo, quedan automáticamente limitados a lo nuevo/lo raro. Confirmárselo a Leonardo.
 
 ## Terminado
 - **D1 embeddings**: `src/embeddings.py` (`python -m src.embeddings`), commit `5159f0b`.

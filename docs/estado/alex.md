@@ -1,18 +1,19 @@
 # Estado de Alex
 
 - **Rol:** Evaluación (docs/guias/evaluacion.md)
-- **Actualizado:** sáb 17:50
+- **Actualizado:** sáb 18:20
 
 ## Haciendo ahora
-- Siguiente, por orden (lo que me habéis pedido):
-  1. **Lester**: test offline SIN las compras de productos ya comprados (en vivo no hay recompras) y re-medir todo.
-  2. **Leonardo**: medir R5 (`usar_modelo`) y, cuando la reentrenes sin `ya_comprado`, la nueva.
-  3. **Artai**: reconciliar 61,6 % (mío) frente a 100 % (tuyo) de recompras.
-- **A/B C frente a CF (respuesta a Lester): NO se puede confirmar CF > C.** Mi panel, 15 min comunes (sáb ~17:30-17:43):
-  C 603 pet. / CF 1322. Compras C 7 (1,16/100) frente a CF 8 (0,61/100), IC 95 % de la diferencia [−1,51, +0,40]
-  → puede ser suerte. Clics −27 % (suerte). €/petición C 0,156 frente a CF 0,314. Tu ventana 16:39-17:39 daba lo
-  contrario (CF 1,19 % frente a C 1,02 %): con 7-8 compras por brazo, cada ventana dice una cosa. Hace falta ≥ 1 h más.
-- **Fiabilidad, URGENTE (Lester)**: en esos mismos 15 min, servido a tiempo C 79,6 % y CF 72,7 %. Por debajo del 90 %.
+- Siguiente (plan de la noche): test offline sin recompras y medir R6 (LightGBM) de Leonardo contra C, la puerta para
+  ir en vivo. Después, reconciliar con Artai 61,6 % frente a 100 % de recompras.
+- **A/B en vivo, lectura de las 18:10** (cada brazo frente a C en los MISMOS minutos, mi panel + IC 95 %):
+  | A/B | Min. | Compras/100 C → brazo | Clics | €/pet. C → brazo | Veredicto |
+  |---|---|---|---|---|---|
+  | C frente a D (co-visitas) | 16 | 1,01 → 0,75 (−26 %, suerte) | −41 %, **real** | 1,06 → 0,44 | Fuera |
+  | C frente a E (re-visitas 0.3) | 12 | 0,88 → 0,88 | −13 %, suerte | 0,40 → 0,25 | No aportan |
+  | **C frente a CF (quitar lo ya comprado)** | **42** | **1,18 → 0,66 (−44 %)**, IC [−1,07, +0,03] | −13 %, suerte | 0,19 → 0,22 | **Casi significativo: CF vende menos** |
+  C/CF es el A/B con más datos (6.659 peticiones). La ventana de Lester (CF 1,19 % frente a 1,02 %) tenía solo 494 de CF.
+- **Fiabilidad**: ~80 % a tiempo en C y CF (16:29-17:10 UTC). Causa: la wifi (estado de Lester).
 
 ## Terminado
 - IPS10 en evaluar.py (IPS en las 10 posiciones, tope 50, con bootstrap) y lectura del A/B por minutos comunes:
@@ -33,7 +34,7 @@ Lo medido es si cada pieza sirve como REGLA para ordenar la lista entera. Un ár
 quitar variables con información.
 | Señal (variable por producto candidato) | Qué hemos medido | Para el árbol |
 |---|---|---|
-| Ya comprado por este usuario | En el HISTÓRICO, 61,6 % de las compras del test son recompras y filtrarlas hunde purchase_hit offline 0.86 → 0.32. Pero el organizador avisa: "trust the feedback loop more than the docs, and the docs more than a CSV" → la recompra del histórico es un artefacto del CSV. En vivo, CF (filtro) frente a C: 3 vs 3 compras en 10 min, sin diferencia significativa | **No significativa (confirmado en el stand). NO usarla para entrenar**: en el histórico domina y el árbol aprendería el artefacto |
+| Ya comprado por este usuario | Histórico (CSV): 61,6 % de las compras del test son recompras. EN VIVO (lo que manda, según el organizador: "trust the feedback loop more than the docs, and the docs more than a CSV"): quitarlo (CF) vende un 44 % menos que C, casi significativo (42 min). Pero ponerlo 1.º tampoco funciona: R5 lo ponía 1.º en 366 de 600 peticiones y convirtió 0,47 % | **Incluirla, pero con el peso VIGILADO**: tiene señal real, y el CSV la exagera. Comprobar que el árbol no la pone siempre 1.ª (el fallo de R5). Nunca filtrarla |
 | Popular en la categoría de lo último visto | La v0 (solo esto) gana a todo, offline y en vivo (A/B C) | **Imprescindible** |
 | Popularidad global | Baseline del starter: 0.54 purchase_hit (v0: 0.86) | Útil (base) |
 | Ya visto en esta sesión (re-visita) | Cuando se enseñaba, 1,96 compras/100 huecos vs 0,12 (Leonardo). Como regla: −4 % IPS10 offline, igual en vivo | Útil como variable, no como regla |
@@ -42,7 +43,12 @@ quitar variables con información.
 | Vecinos por descripción | El historial no tiene productos nuevos: no medible offline | Sin datos para entrenar; útil solo en vivo (frío) |
 | Tendencia (última media hora) | A/B T frente a C (13 min): compras 7 vs 8, clics −13 %, nada significativo | Sin datos suficientes |
 | (Modelos M / MT / MTF, regresión logística) | En vivo por debajo de C en clics (MT −52 %, real); compras sin diferencia significativa (4-5 por brazo) | Aún no ganan a la v0 |
-| Precio | No medido | No medido |
+| Precio relativo (frente a lo visto y al precio habitual del comprador) | Medido por Lester (3.530 compras): se compra lo MÁS BARATO de lo afín (×0,55 de lo visto, ×0,53 del habitual). R5 aprendió "caro = mejor" (sesgo del carrusel antiguo) | **Útil, como precio RELATIVO**, no absoluto |
+| Misma subcategoría / marca que lo visto | Medido por Lester: 97,6 % de las compras son de la categoría de lo último visto; dentro, misma subcategoría 34 % (azar ~11 %), misma marca 22 % | Útil |
+
+**Cómo leerla:** las señales que fallaron EN VIVO fallaron como regla única (D, E) o por un peso exagerado (R5 con
+`ya_comprado`). Para el árbol la puerta es la misma que para todo: medido offline con `python -m src.evaluar`
+(con test sin recompras) y después A/B frente a C. C es la versión a batir.
 
 **Ojo al entrenar:** el historial solo tiene etiquetas de lo que el carrusel antiguo enseñó (sesgado a lo popular).
 Ponderar por 1/propensity (con tope, p. ej. 50), como hace la R5, y validar con `python -m src.evaluar` (IPS10 + bootstrap).
@@ -52,10 +58,10 @@ Ponderar por 1/propensity (con tope, p. ej. 50), como hace la R5, y validar con 
   ts >= 2026-11-07), 876 (61,6 %) son de un producto que ese usuario compró ANTES del corte según
   `usuarios.cargar_comprados(hasta='2026-11-07')` (compras de shop.history_events). Lester midió lo mismo sobre las 3.530
   compras del test: 62 %. El 100 % de Artai debe de usar otra ventana o tabla: comparar consultas.
-- **Recompra: el histórico engaña.** El 61,6 % de las compras del test son de algo ya comprado antes, pero los
-  organizadores confirman que en vivo la recompra NO es significativa ("trust the feedback loop more than the docs,
-  and the docs more than a CSV"). Las métricas offline que dependen de recompras (purchase_hit con o sin filtro)
-  están infladas por ese artefacto: decidir con el A/B en vivo.
+- **Recompra: qué dice de verdad el organizador.** Su mensaje es una escala de confianza: feedback en vivo >
+  documentación > CSV. No dice "en vivo no hay recompras" ni "el modelo premia recomprar": dice que mande el
+  feedback. Y nuestro feedback (C frente a CF, 42 min) dice: **no quitar lo ya comprado** (−44 %, casi
+  significativo). Si conviene EMPUJARLO, no está medido. Las métricas offline con recompras están infladas por el CSV.
 - El segmento frío del test solo tiene 35 compras: el purchase_hit frío es ruido; mirar el hit_rate frío.
 - **En `feedback`, "late" no aparece nunca**: lo que enviamos tarde sale como `fallback_reason = 'missing'`
   aunque esté en `submissions`. El panel lo cuenta como "tarde".
@@ -67,7 +73,13 @@ Ponderar por 1/propensity (con tope, p. ej. 50), como hace la R5, y validar con 
   lo que enseñó. Por eso baseline_categoria saca 0.76 de hit_rate pero un SNIPS más bajo que baseline_starter.
 
 ## Necesito de alguien
-- **Leonardo**: para el gradient boosting, ver la tabla de señales de arriba. Sobre todo: NO entrenar con "ya
-  comprado" (artefacto del histórico) y ponderar por 1/propensity.
-- **Artai**: el commit `30fb29c` y `docs/presentacion.md` dicen que el organizador "confirma que el modelo premia
-  recomprar". Es al revés: confirma que NO es significativa. Corrígelo en la presentación (el archivo es tuyo).
+- **Leonardo (R6, árbol)**: ver la tabla de señales de arriba. CORRIGE lo que puse antes: "ya comprado" SÍ va al
+  árbol (en vivo quitarlo vende −44 %), pero vigila su peso (que no quede siempre 1.º, el fallo de R5). Precio
+  RELATIVO, subcategoría y marca como señales nuevas. Ponderar por 1/propensity. No filtrar nunca lo comprado.
+- **Lester**: CF (filtro) lleva el 75 % del tráfico y en el A/B con más datos vende un 44 % menos que C (casi
+  significativo). Propongo volver a C, o al menos invertir el reparto (C 75 %, CF 25 %). Fila en EXPERIMENTOS 18:20.
+- **Artai**: 1) en tu análisis del leaderboard, CF es CON filtro (`_CF = {**_V0, "_filtrar_comprados": True}`,
+  `src/servicio.py:59`), no "sin filtro". 2) El mensaje del organizador dice "fíate del feedback", no "el modelo
+  premia recomprar": corrígelo en `docs/presentacion.md`. 3) `frio_historial = 1.2` encendido por defecto en
+  `ranking.py` (archivo de Leonardo) empuja lo comprado al 1.º puesto en los fríos: no está medido y es lo que hundió
+  a R5. Debería ir APAGADO por defecto hasta un A/B (C frente a C + frio_historial).

@@ -56,14 +56,15 @@ HILOS_ENVIO = 3
 _CANDADO = threading.Lock()
 
 VARIANTES: list[tuple[str, dict]] = [("-C", {"_sin_covisitas": True, "_sin_comprados": True}),
-                                     ("-D", {"_sin_comprados": True})]
+                                     ("-E", {"_sin_covisitas": True, "_sin_comprados": True, "revisitas": 0.3})]
 """Reparto A/B (tarea O6). Cada comprador cae SIEMPRE en la misma variante: hash(user_id) % len(VARIANTES).
 Cada variante = (sufijo del nombre, params para ranking.recommend). Ejemplo para probar re-visitas:
     VARIANTES = [("-A", {}), ("-B", {"revisitas": True})]   ->  e-samen-v2-A y e-samen-v2-B en el leaderboard
 Con una sola variante ("", {}) todo el mundo recibe lo mismo y el nombre no lleva sufijo.
 Claves especiales (las aplica el servicio, no ranking): "_sin_covisitas" y "_sin_comprados" vacían esa pieza del Estado.
 A/B 16:41-16:55: A = v1 sin co-visitas, B = v1 completa (las dos con filtro de comprados: A no era la v0).
-A/B actual (sáb 16:55): C = v0 real (sin co-visitas ni filtro) · D = co-visitas sin filtro. Única diferencia: co-visitas."""
+A/B 16:51-17:10: C = v0 real · D = co-visitas sin filtro -> D pierde (0,78 % vs 1,00 %).
+A/B actual (sáb 17:10): C = v0 real · E = C + re-visitas (lo ya visto arriba). Única diferencia: re-visitas."""
 
 
 def variante(peticion: dict) -> tuple[str, dict]:

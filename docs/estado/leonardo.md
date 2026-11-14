@@ -79,6 +79,11 @@
   En vivo (`hasta=None`) el archivo es `data/covisitas_todo.json`.
 
 ## Necesito de alguien
+- **Evaluación (Alex):** ya está `filtrar_comprados` en `ranking.PARAMS`. Para medir sin filtro:
+  `{"filtrar_comprados": False}`. Sigue en True por defecto solo por la prueba de Lester (abajo).
+- **Operador (Lester):** `src/prueba_local.py` línea 54 exige que con piezas no salga lo ya comprado. ¿Puedes
+  pasar `{"filtrar_comprados": True}` a `recommend()` en esa prueba? Así lo pongo en False por defecto (lo pide
+  Alex) sin que falle. Mientras tanto, en vivo se apaga con `{"filtrar_comprados": False}` en VARIANTES.
 - **Evaluación (Alex):** mide `{"usar_modelo": True}` (R5). Antes hay que crear `data/puntuacion.json` con
   `python -m src.puntuacion` (~15 s; si no existe, la clave no hace nada). En ese modo los candidatos son los 40
   primeros de: populares de su categoría, populares de siempre, co-visitas, lo visto y lo ya comprado; el

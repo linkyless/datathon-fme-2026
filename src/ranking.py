@@ -78,7 +78,7 @@ PARAMS: dict = {"decaimiento": DECAIMIENTO, "revisitas": REVISITAS, "afin_sub": 
                 "afin_marca": AFIN_MARCA, "normalizar_fila": NORMALIZAR_FILA,
                 "precio_coherente": PRECIO_COHERENTE, "lambda_precio": LAMBDA_PRECIO,
                 "usar_vecinos": False, "usar_contexto": False, "tendencia": TENDENCIA,
-                "usar_modelo": False}
+                "usar_modelo": False, "filtrar_comprados": True}
 """usar_modelo (R5): los 10 los elige la regresión logística de src/puntuacion.py en vez de la suma de puntos.
 Necesita data/puntuacion.json (python -m src.puntuacion); si no existe, se ignora. En este modo NO se quita lo ya
 comprado: el modelo aprendió que haberlo comprado antes SUBE la probabilidad de compra (×1,83). APAGADO."""
@@ -133,7 +133,11 @@ def _con_modelo(peticion: dict, estado: Estado, vistos: list[str], puntos: Count
 
 def recommend(peticion: dict, estado: Estado, params: dict | None = None) -> list[str]:
     p = {**PARAMS, **(params or {})}
-    ya_comprado = estado.comprados.get(str(peticion.get("user_id", "")), set())
+    # filtrar_comprados (R2): quitar lo que ya compró. En el historial la gente recompra (Evaluación: el 61,6 % de
+    # las compras del test son de algo ya comprado; con el filtro, purchase_hit 0.86 -> 0.32). Sigue en True por
+    # defecto SOLO porque src/prueba_local.py (línea 54) lo exige; se apagará cuando el Operador adapte esa prueba.
+    ya_comprado = (estado.comprados.get(str(peticion.get("user_id", "")), set())
+                   if p["filtrar_comprados"] else set())
 
     def vale(pid: str) -> bool:
         return pid in estado.disponibles and pid not in ya_comprado

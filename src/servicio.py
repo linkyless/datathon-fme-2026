@@ -63,6 +63,13 @@ VARIANTES: list[tuple[str, dict]] = [
     ("-CF", _CF),
     ("-CF", _CF),
 ]
+VARIANTES_V2: list[tuple[str, dict]] = [
+    ("-CF", _CF),                                         # control: lo que corre desde 17:35
+    ("-V2", {"_eleccion": True, "_filtrar": True}),       # e-samen-v2 quitando lo ya comprado
+    ("-V2N", {"_eleccion": True, "_filtrar": False}),     # e-samen-v2 sin quitarlo (en su sitio, no forzado arriba)
+]
+"""PREPARADO, NO EN VIVO: se activa con `python -m src.servicio --v2` cuando Evaluación dé el ok a la v2.
+Responde a la vez: ¿v2 > CF? y ¿hay que quitar lo ya comprado? (sin depender de lo que digan los organizadores)."""
 """Reparto A/B (tarea O6). Cada comprador cae SIEMPRE en la misma variante: hash(user_id) % len(VARIANTES).
 Cada variante = (sufijo del nombre, params para ranking.recommend). Ejemplo para probar re-visitas:
     VARIANTES = [("-A", {}), ("-B", {"revisitas": True})]   ->  e-samen-v2-A y e-samen-v2-B en el leaderboard
@@ -274,11 +281,15 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--sin-envio", action="store_true", help="hace todo menos insertar en submissions")
     ap.add_argument("--relevo", action="store_true", help="prepararse y esperar Enter antes de empezar")
+    ap.add_argument("--v2", action="store_true", help="usar VARIANTES_V2 (A/B CF / V2 / V2N)")
     ap.add_argument("--duracion", type=float, default=0, help="segundos hasta pararse solo (0 = nunca)")
     args = ap.parse_args()
+    global VARIANTES
+    if args.v2:
+        VARIANTES = VARIANTES_V2
 
     mv = version_modelo()
-    log(f"arrancando {mv} | equipo {TEAM} | {'SIN ENVÍO (prueba)' if args.sin_envio else 'EN VIVO'}")
+    log(f"arrancando {mv} | equipo {TEAM} | {'SIN ENVÍO (prueba)' if args.sin_envio else 'EN VIVO'} | variantes {[v for v, _ in VARIANTES]}")
     estado = estado_inicial()
     log(f"estado inicial listo: {len(estado.catalogo)} productos, {len(estado.disponibles)} disponibles")
     parar = threading.Event()

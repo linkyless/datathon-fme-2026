@@ -4,7 +4,7 @@
 - **Actualizado:** sáb 14:10
 
 ## Haciendo ahora
-- O4: vigilar el servicio en vivo. Pendiente: 2 hilos de envío (el envío tarda hasta 1 s y los lotes esperan en cola).
+- O4: vigilar el servicio en vivo (e-samen-v0-2a2ee49, 3 hilos de envío desde 14:13:39).
 
 ## Terminado
 - O3: relevo a las 14:08:23. EN VIVO `e-samen-v0-6804453` (`python -m src.servicio`, en su propia ventana). 0 duplicados. El baseline del starter está PARADO.

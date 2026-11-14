@@ -49,6 +49,10 @@ WHERE request_id::String IN (
 
 LOG = Path(__file__).resolve().parent.parent / "logs" / "servicio.log"
 
+HILOS_ENVIO = 3
+"""Trabajadores de envío en paralelo (medido: un insert tarda 0,3-1 s)."""
+_CANDADO = threading.Lock()
+
 
 def log(msg: str) -> None:
     linea = f"{time.strftime('%H:%M:%S')} {msg}"
@@ -148,11 +152,13 @@ def enviar(cola: queue.Queue, sin_envio: bool, stats: dict) -> None:
             try:
                 if not sin_envio:
                     insertar("submissions", lote, timeout=3)
-                stats["enviadas"] += len(lote)
+                with _CANDADO:  # varios hilos suman a la vez: sin candado se perderían cuentas
+                    stats["enviadas"] += len(lote)
                 break
             except Exception as e:
                 log(f"envío falló (intento {intento}): {e}")
-        stats["ms_envio"].append((time.perf_counter() - t) * 1000)
+        with _CANDADO:
+            stats["ms_envio"].append((time.perf_counter() - t) * 1000)
 
 
 # ---------------------------------------------------------------- Sondeo (hilo 1, el principal)
@@ -185,8 +191,11 @@ def main() -> None:
 
     stats = {"enviadas": 0, "sustituidas": 0, "ms_envio": [], "edad_ms": [], "fallos_sondeo": 0}
     cola: queue.Queue = queue.Queue()
-    hilo_envio = threading.Thread(target=enviar, args=(cola, args.sin_envio, stats), daemon=True, name="envio")
-    hilo_envio.start()
+    # Varios trabajadores de envío: un insert tarda hasta ~1 s y, con uno solo, el lote siguiente esperaba en cola.
+    hilos_envio = [threading.Thread(target=enviar, args=(cola, args.sin_envio, stats), daemon=True, name=f"envio{i}")
+                   for i in range(HILOS_ENVIO)]
+    for h in hilos_envio:
+        h.start()
 
     inicio = ultimo_log = time.monotonic()
     try:
@@ -223,8 +232,10 @@ def main() -> None:
         log("parando (Ctrl+C)...")
     finally:
         parar.set()
-        cola.put(None)
-        hilo_envio.join(timeout=5)
+        for _ in hilos_envio:
+            cola.put(None)
+        for h in hilos_envio:
+            h.join(timeout=5)
         log(f"parado. Respondidas en total: {stats['enviadas']}, sustituidas: {stats['sustituidas']}")
 
 

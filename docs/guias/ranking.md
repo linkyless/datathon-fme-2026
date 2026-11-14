@@ -11,7 +11,7 @@ orden. Eres el dueño de la parte que más puntos da (conversión: 50).
 co-visitas `starter/offline_eval.ipynb`.
 
 **Con quién te cruzas (y con nadie más):**
-- **Alex** mide tus versiones. Tú le avisas ("mide v1-covisitas"); él te devuelve números. No le esperes: mientras
+- **Alex** mide tus versiones. Tú le avisas ("mide e-samen-v1"); él te devuelve números. No le esperes: mientras
   mide, sigue con la tarea siguiente.
 - **Lester** solo si necesitas un campo nuevo en el `Estado` (tarea R4). Lo pides por tu archivo de estado.
 - Con Artai no te cruzas: sus piezas (`populares_contexto`, `vecinos`) ya las usa `ranking.py` solas cuando llegan.
@@ -32,7 +32,7 @@ Pega esto a tu agente:
 
 **Hecho cuando:** devuelve co-visitas para la mayoría de productos y `prueba_local` pasa. Commit y push. Luego
 escribe en tu estado: *"Evaluación: mide e-samen-v1 (co-visitas) contra el baseline"* y cambia `NOMBRE` en ranking.py a
-`"v1-covisitas"`.
+`"e-samen-v1"` (y apunta en docs/EXPERIMENTOS.md que v1 = co-visitas).
 
 ## R2 · No repetir lo ya comprado — hasta las 15:15
 Pega esto a tu agente:

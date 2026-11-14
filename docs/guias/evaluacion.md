@@ -52,7 +52,7 @@ Cuando Ranking avise ("mide e-samen-v1"):
 git pull --rebase
 python -m src.evaluar --recalcular
 ```
-Apunta una fila en `docs/EXPERIMENTOS.md` con los números tal cual y escribe en el chat: *"v1-covisitas:
+Apunta una fila en `docs/EXPERIMENTOS.md` con los números tal cual y escribe en el chat: *"e-samen-v1:
 hit_rate X vs Y del baseline, slot1_matches Z → apta / no apta"*. Apta = mejor que el baseline en hit_rate y
 purchase_hit, y SNIPS no peor. Si `slot1_matches` es pequeño (< 300), dilo: el SNIPS es ruido.
 

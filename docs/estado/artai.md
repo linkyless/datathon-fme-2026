@@ -4,6 +4,13 @@
 - **Actualizado:** sáb ~16:10
 
 ## Haciendo ahora
+- **Revisión de bugs de todo `src/` (sáb ~17:15) y arreglos aplicados** (pedidos por Artai; commit de hoy):
+  1. `embeddings.py` (mío): los 429 ya no reintentan para siempre — tras 5 intentos suelta excepción y el servicio lo reintenta en 60 s. Antes, una saturación de HelmCode congelaba el refresco de TODAS las piezas pesadas.
+  2. `covisitas.py` (Leonardo): el cache incluye FIRMA de parámetros (pesos, vecinos, exponente) en el nombre — antes, cambiar un peso dejaba el servicio leyendo co-visitas viejas sin aviso.
+  3. `servicio.py` (Lester): el fallback se completa con disponibles hasta 10 y se valida antes de enviar (antes podía salir <10 → inválida); y los lotes que fallan 2 intentos se cuentan como `perdidas` (visibles en el log).
+  4. `evaluar.py` (Alex): guard de propensity (0/NULL no matan la medición) y límite de 4 procesos de evaluación por RAM.
+  5. `usuarios.py` (Leonardo): docstring actualizado — el filtro de comprados es parámetro medido, no regla fija (61,6 % recompras en el test).
+  6. `panel_tukey.py` (mío): conversión POR VERSIÓN (une feedback⋈submissions como el panel de Alex) — los brazos del A/B ya no se mezclan. Dato de las 17:15: e-samen-v1-C 0,97 % vs baseline 0,78 % (6 h).
 - Presentación + panel Tukey listos; pidiendo números a Evaluación y resultados en vivo para rellenar los **[PENDIENTE]** de docs/presentacion.md.
 - **Arreglo tras la medición de Alex (sáb ~15:30)**: `populares_contexto` ahora lleva los 20 populares generales DELANTE y lo específico del (device, region) detrás (commit `2ed6420`). Así el relleno de fríos no puede rendir peor que los populares de siempre (medido: 0,60) y se conserva la señal de contexto para la cola. Alex: remédelo cuando quieras.
 - **Vecinos no hace falta apagarlos**: `ranking.py` ya solo los usa para productos SIN co-visitas (paso 2). El desastre 0,76→0,05 era por co-visitas vacío, no por los vecinos. Con co-visitas de Leonardo, quedan automáticamente limitados a lo nuevo/lo raro. Confirmárselo a Leonardo.

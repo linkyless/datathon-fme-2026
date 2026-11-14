@@ -28,7 +28,15 @@ nunca lo que hace (los demás equipos lo leerían). Qué es cada versión se apu
 DECAIMIENTO = 0.7
 """Peso de cada vista hacia atrás: la última vale 1, la anterior 0.7, la otra 0.49..."""
 
-PARAMS: dict = {"decaimiento": DECAIMIENTO, "usar_vecinos": False, "usar_contexto": False}
+REVISITAS = 0.0
+"""Cuánto empujamos los productos que el comprador YA ha visto en esta sesión (y no ha comprado). Es un
+multiplicador sobre la mejor puntuación de co-visitas: con 1.0, lo último que vio empata con el mejor candidato
+y lo anterior queda justo detrás; con 0 se apaga.
+APAGADO por defecto hasta que Evaluación lo mida (candidata a e-samen-v2: params={"revisitas": 1.0}).
+Motivo (medido en shop.history_sessions): un producto ya visto se compró en 1,96 de cada 100 huecos del carrusel
+antiguo frente a 0,12 los no vistos (sin corregir por posición)."""
+
+PARAMS: dict = {"decaimiento": DECAIMIENTO, "revisitas": REVISITAS, "usar_vecinos": False, "usar_contexto": False}
 """Parámetros por defecto. Las variantes A/B (src/servicio.py, Operador) pasan otro diccionario con las mismas
 claves: así se prueban variantes en vivo sin tocar este archivo. Cada clave nueva se añade aquí con su valor.
 usar_vecinos / usar_contexto: piezas de Artai (D3, D4). APAGADAS hasta que Evaluación o un A/B digan que suben:
@@ -56,9 +64,18 @@ def recommend(peticion: dict, estado: Estado, params: dict | None = None) -> lis
             for pos, otro in enumerate(estado.vecinos.get(pid, [])):
                 puntos[otro] += 0.5 * (p["decaimiento"] ** k) / (pos + 1)
 
+    # 3) Re-visitas: lo que ya ha mirado y no ha comprado. Cada producto cuenta una vez, por su vista más reciente.
+    if p["revisitas"] > 0 and vistos:
+        tope = max(puntos.values(), default=1.0)
+        contados: set[str] = set()
+        for k, pid in enumerate(reversed(vistos)):
+            if pid not in contados:
+                contados.add(pid)
+                puntos[pid] += p["revisitas"] * (p["decaimiento"] ** k) * tope
+
     elegidos = [pid for pid, _ in puntos.most_common() if vale(pid)][:10]
 
-    # 3) Relleno, en este orden: más vendidos de la categoría de lo último que vio (el baseline de las
+    # 4) Relleno, en este orden: más vendidos de la categoría de lo último que vio (el baseline de las
     #    diapositivas), populares de su tipo de comprador, populares de siempre y cualquiera disponible.
     #    (Se asume que recent_views va de más antiguo a más reciente, como en el cuaderno oficial.)
     ultima_categoria = str(estado.catalogo.get(vistos[-1], {}).get("category", "")) if vistos else ""

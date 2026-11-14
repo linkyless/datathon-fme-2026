@@ -4,6 +4,9 @@
 - **Actualizado:** sáb ~19:15
 
 ## Haciendo ahora
+- **Hallazgo del leaderboard (sáb ~19:45): el 2º equipo separa el tráfico por tipo de petición.** La clave está en el campo `cold_requests` de la API (`/api/state?by=model`): las versiones del team_26 con conv == frío EXACTAS (m0c62b 3,37, m41245 2,74, mf4d99 2,23) tienen `cold_requests == requests` — solo reciben peticiones frías; otras (`m56b24`, `mca3af`) tienen `cold_requests = 0` — solo cálidas. O sea: **enrutamiento por tipo de petición** (frío → modelo especialista; cálido → modelo de sesión) en vez de reparto por hash de usuario como hacemos nosotros.
+  - Su versión solo-fríos convierte **3,37 %** (por encima de la referencia 2,09): un especialista de fríos que aprende EN VIVO qué productos convierten (feedback loop por producto) — nivel 4 de nuestra escalera funcionando como brazo dedicado.
+  - Implicación para nosotros: (1) proponer a Lester repartir brazos por tipo de petición (frío/cálido) y no por hash de usuario; (2) el especialista de fríos puede arrancar de `perfiles_producto[pid]["tasa_ips"]` (ya en el Estado) + tendencias, y aprender del feedback; (3) corrección a mi análisis anterior: la "igualdad exacta" no era "misma lista para todos", era enrutamiento.
 - **CORRECCIÓN de mi lectura del anuncio de las 17:40 (gracias Lester/Alex/Leonardo por corregirla).**
   Texto EXACTO del mensaje de los organizadores (Lester lo pidió para contrastar con lo que dijeron en persona):
   > "Welcome to the real world, folks. Sometimes the client hands you requirements that don't quite match the

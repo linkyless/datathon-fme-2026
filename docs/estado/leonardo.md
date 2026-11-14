@@ -4,9 +4,21 @@
 - **Actualizado:** sáb 14/11 ~17:10
 
 ## Haciendo ahora
-- R4 hecha (falta que el servicio rellene `tendencias`). Siguiente: R5 (regresión logística).
+- R5 entrenada (src/puntuacion.py). Siguiente: usarla dentro de recommend() como clave de PARAMS (apagada).
 
 ## Terminado
+- R5 regresión logística: `python -m src.puntuacion` (numpy, sin dependencias nuevas; coeficientes en
+  data/puntuacion.json, que no se sube). Entrena con las visitas al carrusel del 2026-10-24 al 2026-11-07 (todas
+  las 6.545 con compra + 1 de cada 10 sin compra, 52.696 visitas), piezas calculadas solo con datos anteriores al
+  24/10, filas pesadas por 1/propensity (recorte 50) y señal de puesto para quitar el sesgo de posición.
+  Coeficientes (por 1 desviación típica; ×odds = cuánto se multiplica la probabilidad relativa de compra):
+  popularidad 3,72 · ya_comprado 1,83 · misma_categoria 1,70 · frio×popularidad 1,46 · covisita 1,19 ·
+  revisita 1,14 · log_precio 1,12 · misma_subcategoria 1,02 · misma_marca 1,03 · popularidad_categoria 0,54
+  (va junto con popularidad: casi la misma información). Puestos: el 2º 0,66, el 5º 0,44, el 10º 0,34 frente al 1º.
+  Chequeo mío en el test (100.000 visitas posteriores al corte, 1.467 compras): AUC 0,910 sin puestos.
+  Reordenando los 10 que se enseñaron en cada visita con compra, el comprado queda 1º en el 48,5 % con el modelo,
+  40,9 % con los populares de la categoría, 33,1 % con el orden del carrusel antiguo (azar 10 %).
+  Confirma lo de la recompra: haberlo comprado antes multiplica las odds por 1,83 (el filtro de R2 va al revés).
 - R4 tendencias: `cargar_tendencias(hasta)` en src/tendencias.py -> `{product_id: lift}`. Lift = actividad de
   los últimos 30 min (vista 1, carrito 6, compra 3) / ritmo normal de las 3 h anteriores, con prior 10 y
   recortado a [0.5, 3]. En vivo: 5.144 productos, 0,74 s; offline (`hasta='2026-11-07'`): 4.722, 0,30 s.

@@ -50,7 +50,6 @@ SENALES = [
     ("misma_subcategoria", "misma subcategoría que lo último visto"),
     ("misma_marca", "misma marca que algo de lo visto"),
     ("revisita", "ya lo ha visto en esta sesión"),
-    ("ya_comprado", "el comprador ya lo compró antes"),
     ("covisita", "log(1 + puntos de co-visita con lo visto)"),
     ("popularidad", "-log(1 + puesto en los más vendidos)"),
     ("popularidad_categoria", "-log(1 + puesto en los más vendidos de su categoría)"),
@@ -98,7 +97,6 @@ def senales(peticion: dict, candidatos: list[str], estado: Estado) -> np.ndarray
     marcas = {cat.get(v, {}).get("brand") for v in vistos} - {None, ""}
     precios = [_log_precio(cat.get(v, {})) for v in vistos]
     precio_medio = sum(precios) / len(precios) if precios else 0.0
-    comprados = estado.comprados.get(str(peticion.get("user_id", "")), set())
     ctx = peticion.get("context") or {}
     movil = float(str(ctx.get("device", "")) in ("ios", "android"))
     frio = float(not vistos)
@@ -120,7 +118,6 @@ def senales(peticion: dict, candidatos: list[str], estado: Estado) -> np.ndarray
             float(bool(vistos) and d.get("subcategory") == ultimo.get("subcategory")),
             float(d.get("brand") in marcas),
             float(c in vistos_set),
-            float(c in comprados),
             math.log1p(covis.get(c, 0.0)),
             pop,
             -math.log1p(idx.categoria.get(c, idx.n)),
@@ -204,18 +201,31 @@ def _estado_entreno() -> Estado:
 
 
 def _matriz(visitas: list[dict], estado: Estado, ponderar: bool):
-    """X (señales + puestos), y (¿compró?), w (peso de cada fila) y a qué visita pertenece cada fila."""
+    """X (señales + puestos), y (¿compró?), w (peso de cada fila) y a qué visita pertenece cada fila.
+
+    Recompras FUERA (los organizadores: en vivo no hay recompras; en el historial son ~62 % de las compras y el
+    modelo aprendería ese artefacto): se descartan las visitas cuya compra es algo que el comprador ya tenía, y en
+    las demás, las filas de productos que ya tenía (en vivo no se le enseñan). Devuelve también cuántas visitas
+    se descartaron."""
     bloques, ys, ws, grupo = [], [], [], []
+    descartadas = 0
     for g, v in enumerate(visitas):
+        tenia = estado.comprados.get(str(v.get("user_id", "")), set())
+        if v["purchased"] and v["purchased"] in tenia:
+            descartadas += 1
+            continue
         shown = list(v["shown"])
-        x = np.hstack([senales(v, shown, estado), _puestos(len(shown))])
+        quedan = [i for i, p in enumerate(shown) if p not in tenia]
+        if not quedan:
+            continue
+        x = np.hstack([senales(v, shown, estado), _puestos(len(shown))])[quedan]  # el puesto original se conserva
         bloques.append(x)
-        ys.extend(float(p == v["purchased"]) for p in shown)
+        ys.extend(float(shown[i] == v["purchased"]) for i in quedan)
         base = 1.0 if (not ponderar or v["purchased"]) else UNA_DE_CADA_SIN_COMPRA / UNA_DE_CADA_CON_COMPRA
-        ws.extend(base * (min(1.0 / max(float(q), 1e-9), RECORTE_PESO) if ponderar else 1.0)
-                  for q in v["propensity"])
-        grupo.extend([g] * len(shown))
-    return np.vstack(bloques), np.asarray(ys), np.asarray(ws), np.asarray(grupo)
+        ws.extend(base * (min(1.0 / max(float(v["propensity"][i]), 1e-9), RECORTE_PESO) if ponderar else 1.0)
+                  for i in quedan)
+        grupo.extend([g] * len(quedan))
+    return np.vstack(bloques), np.asarray(ys), np.asarray(ws), np.asarray(grupo), descartadas
 
 
 # ---------------------------------------------------------------- la regresión (Newton con numpy)
@@ -250,26 +260,14 @@ def auc(puntos: np.ndarray, y: np.ndarray) -> float:
     return float((rangos[pos].sum() - n1 * (n1 + 1) / 2) / (n1 * n0))
 
 
-def _aciertos_en_visita(puntos: np.ndarray, y: np.ndarray, grupo: np.ndarray, k: int) -> float:
-    """Entre los 10 que se enseñaron en cada visita con compra: ¿el comprado queda entre los k primeros si los
-    reordenamos por `puntos`? Con orden al azar sería k/10."""
-    aciertos = total = 0
-    for g in np.unique(grupo[y == 1]):
-        a, b = np.searchsorted(grupo, g, "left"), np.searchsorted(grupo, g, "right")  # filas seguidas
-        filas = np.arange(a, b)
-        orden = filas[np.argsort(-puntos[filas], kind="mergesort")]
-        aciertos += y[orden[:k]].max() > 0
-        total += 1
-    return aciertos / max(total, 1)
-
-
 # ---------------------------------------------------------------- principal
 def main() -> None:
     visitas = _visitas_entreno()
     compras = sum(bool(v["purchased"]) for v in visitas)
     print(f"Entrenamiento {INICIO} -> {CORTE}: {len(visitas)} visitas ({compras} con compra)")
     estado = _estado_entreno()
-    X, y, w, _ = _matriz(visitas, estado, ponderar=True)
+    X, y, w, _, fuera = _matriz(visitas, estado, ponderar=True)
+    print(f"Descartadas {fuera} visitas cuya compra era una recompra; quedan {int(y.sum())} compras para aprender")
     media = X[:, :len(NOMBRES)].mean(axis=0)
     desv = X[:, :len(NOMBRES)].std(axis=0) + 1e-9
     Xn = X.copy()
@@ -285,19 +283,14 @@ def main() -> None:
               "coeficientes": beta[1:1 + len(NOMBRES)].tolist(), "puestos": beta[1 + len(NOMBRES):].tolist()}
     (DATA / "puntuacion.json").write_text(json.dumps(modelo, indent=1))
 
-    # Validación en el test de Evaluación (posterior al corte), con el Estado de ese corte.
+    # Diagnóstico del propio modelo (la comparación con otras versiones la hace Evaluación con src/evaluar.py):
+    # AUC en visitas posteriores al corte, con el Estado de ese corte y el mismo filtro de recompras.
     test = pickle.loads((DATA / f"test_{CORTE}.pkl").read_bytes())
     est = pickle.loads((DATA / f"estado_{CORTE}.pkl").read_bytes())
-    Xt, yt, _, gt = _matriz(test, est, ponderar=False)
+    Xt, yt, _, _, fuera_t = _matriz(test, est, ponderar=False)
     s = (Xt[:, :len(NOMBRES)] - media) / desv @ beta[1:1 + len(NOMBRES)]  # sin puestos: solo el producto
-    print(f"\nTest {CORTE} (posterior al corte): {len(test)} visitas, {int(yt.sum())} compras")
-    print(f"AUC del modelo (sin puestos): {auc(s, yt):.3f}")
-    i_pop = NOMBRES.index("popularidad_categoria")
-    for nombre, puntos in [("modelo", s), ("populares de la categoría", Xt[:, i_pop]),
-                           ("orden del carrusel antiguo", -np.tile(np.arange(10), len(test))[:len(yt)])]:
-        print(f"  reordenando los 10 enseñados por {nombre:<28}: comprado en el 1º "
-              f"{_aciertos_en_visita(puntos, yt, gt, 1):.3f} · en los 3 primeros {_aciertos_en_visita(puntos, yt, gt, 3):.3f}")
-    print("  (al azar: 0.100 y 0.300)")
+    print(f"\nDiagnóstico {CORTE}+: {len(test)} visitas, {fuera_t} descartadas por recompra, {int(yt.sum())} compras")
+    print(f"AUC del modelo (sin puestos): {auc(s, yt):.3f}  (0,5 = azar, 1 = perfecto)")
 
 
 if __name__ == "__main__":

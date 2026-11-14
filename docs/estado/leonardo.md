@@ -1,13 +1,23 @@
 # Estado de Leonardo
 
 - **Rol:** Ranking (docs/guias/ranking.md)
-- **Actualizado:** sáb 14/11 ~17:10
+- **Actualizado:** sáb 14/11 ~18:30
 
 ## Haciendo ahora
-- R5 conectada a recommend() con la clave `usar_modelo` (apagada). Espero la medición de Alex para R6.
+- R5 reentrenada SIN recompras (lo que pidieron Lester y Alex). Espero la medición de Alex para decidir R6.
 
 ## Terminado
-- R5 regresión logística: `python -m src.puntuacion` (numpy, sin dependencias nuevas; coeficientes en
+- R5 v2 (sin recompras): quitada la señal `ya_comprado`; al entrenar se descartan las visitas cuya compra era
+  algo que el comprador ya tenía (3.715 de 6.545; quedan 2.830 compras) y las filas de productos que ya tenía.
+  En recommend(), lo ya comprado ya no es candidato y con `filtrar_comprados` (True) se quita.
+  Coeficientes nuevos (×odds por 1 desviación típica): popularidad 4,70 · misma_categoria 2,38 · covisita 1,21 ·
+  frio×popularidad 1,19 · revisita 1,16 · log_precio 1,16 · móvil×log_precio 0,89 · distancia_precio 1,07 ·
+  misma_marca 1,05 · misma_subcategoria 1,01 · popularidad_categoria 0,46 (va junto con popularidad).
+  Precio (lo que pidió Lester): cada desviación típica más de log(precio) multiplica las odds por 1,16 en web y
+  por ~1,03 en móvil (1,16 × 0,89): el modelo prefiere algo más caro, sobre todo en web. Por eso elige más caro que C.
+  AUC del modelo en visitas posteriores al corte (sin recompras, 542 compras): 0,830.
+  Comprobado: 3.000 peticiones con `usar_modelo`: 0 inválidas, 0 listas con algo ya comprado, 0,175 ms/petición.
+- R5 v1 (sustituida por la v2) regresión logística: `python -m src.puntuacion` (numpy, sin dependencias nuevas; coeficientes en
   data/puntuacion.json, que no se sube). Entrena con las visitas al carrusel del 2026-10-24 al 2026-11-07 (todas
   las 6.545 con compra + 1 de cada 10 sin compra, 52.696 visitas), piezas calculadas solo con datos anteriores al
   24/10, filas pesadas por 1/propensity (recorte 50) y señal de puesto para quitar el sesgo de posición.
@@ -79,25 +89,14 @@
   En vivo (`hasta=None`) el archivo es `data/covisitas_todo.json`.
 
 ## Necesito de alguien
-- **Operador (Lester), URGENTE para el A/B 2×2:** los brazos -M y -MT solo prueban R5 si en TU máquina existe
-  `data/puntuacion.json` (`python -m src.puntuacion`, ~15 s, solo lee de RawTree). Si no existe, `usar_modelo` se
-  ignora y esos brazos reciben la suma de puntos con co-visitas + filtro de comprados (= la v1), no R5. Desde
-  ahora, si falta, sale en consola "AVISO puntuacion: no hay data/puntuacion.json...". Tras crearlo, reinicia.
-- **Evaluación (Alex):** ya está `filtrar_comprados` en `ranking.PARAMS`. Para medir sin filtro:
-  `{"filtrar_comprados": False}`. Sigue en True por defecto solo por la prueba de Lester (abajo).
-- **Operador (Lester):** `src/prueba_local.py` línea 54 exige que con piezas no salga lo ya comprado. ¿Puedes
-  pasar `{"filtrar_comprados": True}` a `recommend()` en esa prueba? Así lo pongo en False por defecto (lo pide
-  Alex) sin que falle. Mientras tanto, en vivo se apaga con `{"filtrar_comprados": False}` en VARIANTES.
-- **Evaluación (Alex):** mide `{"usar_modelo": True}` (R5). Antes hay que crear `data/puntuacion.json` con
-  `python -m src.puntuacion` (~15 s; si no existe, la clave no hace nada). En ese modo los candidatos son los 40
-  primeros de: populares de su categoría, populares de siempre, co-visitas, lo visto y lo ya comprado; el
-  modelo los ordena y NO quita lo ya comprado. Según tu veredicto, sigo con R6 (LightGBM) o no.
-- **Operador (Lester):** si algún día va en vivo `usar_modelo`, en tu máquina hay que ejecutar antes
-  `python -m src.puntuacion` (crea data/puntuacion.json, que no se sube al repo).
-- **Operador (Lester), R4:** campo `tendencias: dict[str, float]` en el `Estado` (product_id -> lift) y que el
-  refresco lo rellene con `tendencias.cargar_tendencias(None)` cada 1-2 min (tarda < 1 s). En `construir(hasta)`:
-  `tendencias.cargar_tendencias(hasta)`. ranking.py ya lo lee con `getattr`, así que no rompe nada mientras no esté.
-  Para probarlo en A/B basta `{"tendencia": 0.3}` en una variante.
+- **Evaluación (Alex):** mide R5 v2: `{"usar_modelo": True}` (filtrar_comprados queda en True). Antes hay que
+  regenerar `data/puntuacion.json` con `python -m src.puntuacion` (~15 s): el archivo viejo ya no vale (tenía la
+  señal `ya_comprado`) y, si no se regenera, `usar_modelo` no hace nada y avisa en consola. Candidatos: los 40
+  primeros de populares de su categoría, populares de siempre, co-visitas y lo visto, sin lo ya comprado.
+  Según tu veredicto, sigo con R6 (LightGBM) o no.
+- **Operador (Lester):** hecho lo que pediste (R5 sin `ya_comprado` ni recompras; precio arriba en "Terminado").
+  Si Alex da el ok y entra en vivo: en tu máquina `python -m src.puntuacion` ANTES de reiniciar (el
+  data/puntuacion.json viejo se ignora a propósito). `filtrar_comprados` sigue en True por defecto, como CF.
 - **Operador (Lester):** `src/prueba_local.py` da por hecho el orden de la v0 (`items[0] == "p_030"` sin piezas y
   `"p_003"` con piezas). Con re-visitas encendidas lo ya visto va primero y esas dos líneas fallan aunque la
   respuesta sea válida. Cuando se enciendan, habrá que pasar `{"revisitas": 0}` en esa prueba o cambiar lo esperado.

@@ -89,8 +89,9 @@ PARAMS: dict = {"decaimiento": DECAIMIENTO, "revisitas": REVISITAS, "afin_sub": 
 """filtrar_comprados: quitar lo ya comprado. En vivo (API, 1 h, ~2.800 pet./brazo) CF (CON filtro) 1,06 % vs C
 (sin filtro) 1,02 %: en total, empate. Se deja encendido (lo que corre en vivo con más tráfico). OJO: CF = CON filtro."""
 """usar_modelo (R5): los 10 los elige la regresión logística de src/puntuacion.py en vez de la suma de puntos.
-Necesita data/puntuacion.json (python -m src.puntuacion); si no existe, se ignora. En este modo NO se quita lo ya
-comprado: el modelo aprendió que haberlo comprado antes SUBE la probabilidad de compra (×1,83). APAGADO."""
+Necesita data/puntuacion.json (python -m src.puntuacion); si no existe, se ignora (y avisa en consola). Lo ya
+comprado no es candidato y, con filtrar_comprados, se quita (la primera versión lo ponía 1º: aprendió la recompra
+del historial, que en vivo no existe). APAGADO."""
 """Parámetros por defecto. Las variantes A/B (src/servicio.py, Operador) pasan otro diccionario con las mismas
 claves: así se prueban variantes en vivo sin tocar este archivo. Cada clave nueva se añade aquí con su valor.
 usar_vecinos / usar_contexto: piezas de Artai (D3, D4). APAGADAS hasta que Evaluación o un A/B digan que suben:
@@ -120,18 +121,18 @@ def _por_tendencia(lista: list[str], lift: dict[str, float], eta: float) -> list
 
 
 def _con_modelo(peticion: dict, estado: Estado, vistos: list[str], puntos: Counter, lift: dict[str, float],
-                eta: float) -> list[str] | None:
-    """R5. Junta candidatos (populares de su categoría, populares de siempre, co-visitas, lo que ha visto y lo que
-    ya compró), los puntúa con la regresión logística y devuelve los 10 mejores. None si no hay modelo."""
+                eta: float, vale) -> list[str] | None:
+    """R5. Junta candidatos (populares de su categoría, populares de siempre, co-visitas y lo que ha visto), los
+    puntúa con la regresión logística y devuelve los 10 mejores. `vale` = disponible (y no comprado si
+    filtrar_comprados). None si no hay modelo."""
     modelo = puntuacion.modelo_guardado()
     if modelo is None:
         return None
     n = CANDIDATOS_POR_FUENTE
     ultima_categoria = str(estado.catalogo.get(vistos[-1], {}).get("category", "")) if vistos else ""
-    comprados = estado.comprados.get(str(peticion.get("user_id", "")), set())
     fuentes = (estado.populares_categoria.get(ultima_categoria, [])[:n], estado.populares[:n],
-               [pid for pid, _ in puntos.most_common(n)], list(reversed(vistos)), sorted(comprados)[:n])
-    candidatos = list(dict.fromkeys(pid for pid in chain(*fuentes) if pid in estado.disponibles))
+               [pid for pid, _ in puntos.most_common(n)], list(reversed(vistos)))
+    candidatos = list(dict.fromkeys(pid for pid in chain(*fuentes) if vale(pid)))
     if not candidatos:
         return []
     s = puntuacion.puntuar(peticion, candidatos, estado, modelo)
@@ -142,9 +143,8 @@ def _con_modelo(peticion: dict, estado: Estado, vistos: list[str], puntos: Count
 
 def recommend(peticion: dict, estado: Estado, params: dict | None = None) -> list[str]:
     p = {**PARAMS, **(params or {})}
-    # filtrar_comprados (R2): quitar lo que ya compró. En el historial la gente recompra (Evaluación: el 61,6 % de
-    # las compras del test son de algo ya comprado; con el filtro, purchase_hit 0.86 -> 0.32). Sigue en True por
-    # defecto SOLO porque src/prueba_local.py (línea 54) lo exige; se apagará cuando el Operador adapte esa prueba.
+    # filtrar_comprados (R2): quitar lo que ya compró. ENCENDIDO: los organizadores confirman que en vivo no hay
+    # recompras (el 61,6 % de recompras del historial es un artefacto) y en vivo CF (v0 + filtro) va por delante de C.
     ya_comprado = (estado.comprados.get(str(peticion.get("user_id", "")), set())
                    if p["filtrar_comprados"] else set())
 
@@ -230,7 +230,7 @@ def recommend(peticion: dict, estado: Estado, params: dict | None = None) -> lis
 
     elegidos = None
     if p["usar_modelo"]:
-        elegidos = _con_modelo(peticion, estado, vistos, puntos, lift, p["tendencia"])
+        elegidos = _con_modelo(peticion, estado, vistos, puntos, lift, p["tendencia"], vale)
     if elegidos is None:
         elegidos = [pid for pid, _ in puntos.most_common() if vale(pid)][:10]
 

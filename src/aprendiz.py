@@ -3,6 +3,7 @@
     python -m src.aprendiz                 # baja lo nuevo (feedback, peticiones, eventos), reentrena, valida y guarda
     python -m src.aprendiz --ensayo 3000   # además ensaya recomendar() sobre peticiones reales (NO envía nada)
     python -m src.aprendiz --sin-descarga  # reentrena con lo que ya hay en data/aprendiz/
+    python -m src.aprendiz --nombre ap3    # guarda en data/aprendiz_ap3.json SIN pisar data/aprendiz.json (para un A/B)
 
 Por qué (medido el sáb 14/11 con 77.680 respuestas nuestras): lo que más mueve la compra en el simulador no es qué
 producto popular va primero, sino la relación previa de ESE comprador con ESE producto y con su categoría:
@@ -31,6 +32,18 @@ Para conectarlo en vivo (lo hacen sus dueños; este archivo no toca ranking.py n
     mundo.catalogo = estado.catalogo                      # cada vez que el servicio recarga el catálogo
     modelo = aprendiz.Modelo.cargar()                     # y otra vez tras cada reentreno
     items = aprendiz.recomendar(peticion, mundo, modelo, estado.disponibles)
+
+A/B entre dos entrenos (p. ej. AP2 congelado frente a AP3 reentrenado), en la máquina del servicio:
+    cp data/aprendiz.json data/aprendiz_ap2.json          # congela los pesos que están en vivo
+    python -m src.aprendiz --nombre ap3                   # reentrena y guarda aparte
+    aprendiz.Modelo.cargar("ap2") / aprendiz.Modelo.cargar("ap3")   # un modelo por brazo, el mismo Mundo para los dos
+
+Exploración (`recomendar(..., explorar=True)`): en la mitad de las peticiones (EXPLORAR_FRACCION, elegidas por el
+request_id) los huecos 9 y 10 dejan de ser los del modelo y enseñan un producto NUEVO y uno de FUERA de las listas
+de mejores, los dos de una categoría que le interesa a ese comprador. Para qué: hoy solo sabemos qué pasa con lo
+que el modelo ya cree bueno; de los productos nuevos teníamos 1.698 enseñados y 4 compras en todo el sábado. Como la
+mitad que explora se elige por el request_id, se reconstruye después sin apuntar nada (`toca_explorar`) y la otra
+mitad del mismo brazo sirve de comparación: el informe del final del entreno dice qué pasó y cuánto costó.
 """
 from __future__ import annotations
 
@@ -39,8 +52,10 @@ import json
 import math
 import pickle
 import sys
+import random
 import threading
 import time
+import zlib
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -68,6 +83,11 @@ N_CATEGORIA, N_SUBCATEGORIA, N_GLOBAL = 40, 20, 40
 """Candidatos de relleno: los mejores de cada categoría / subcategoría / de toda la tienda."""
 CATEGORIAS_AFINES, SUBCATEGORIAS_AFINES = 3, 5
 SEGUNDOS_LISTAS = 120
+EXPLORAR_FRACCION = 0.5
+"""Parte de las peticiones que exploran cuando se pide `explorar=True`. La otra parte es el grupo de comparación."""
+HUECO_NUEVO, HUECO_RESTO = 8, 9
+"""Huecos 9 y 10 (se cuenta desde 0): los que menos valen (×0,37 del primero), así explorar cuesta poco."""
+INTENTOS_EXPLORAR = 30
 """Cada cuánto se recalculan las listas de mejores por categoría (los números por producto van cambiando)."""
 
 VISTA, CARRITO, COMPRA = 0, 1, 2
@@ -184,6 +204,15 @@ def bajar_vivo(hasta_ms: int | None = None) -> tuple[list, dict, dict]:
 
     # Peticiones y feedback: se vuelve a bajar un margen de 10 min por si alguna fila llegó tarde (se pisa por id).
     pf = _leer("respuestas.pkl", {"hasta_ms": INICIO_VIVO_MS, "peticiones": {}, "feedback": {}})
+    if "version" not in pf:  # archivo de antes de guardar la versión: se baja una vez lo que falta
+        pf["version"] = {}
+        a = INICIO_VIVO_MS
+        while a < pf["hasta_ms"]:
+            b = min(a + 6 * VENTANA_MS, pf["hasta_ms"])
+            for f in _query(f"""SELECT request_id::String AS rid, model_version::String AS mv FROM {_equipo()}.feedback
+                                WHERE {_entre(a, b)} LIMIT 1000000"""):
+                pf["version"][f["rid"]] = sys.intern(f["mv"] or "")
+            a = b
     a = max(INICIO_VIVO_MS, pf["hasta_ms"] - 10 * 60 * 1000)
     while a < hasta_ms:
         b = min(a + VENTANA_MS, hasta_ms)
@@ -194,11 +223,12 @@ def bajar_vivo(hasta_ms: int | None = None) -> tuple[list, dict, dict]:
                                           tuple(sys.intern(p) for p in _productos_vistos(f["rv"])))
         n = 0
         for f in _query(f"""SELECT request_id::String AS rid, shown, clicked::String AS c, purchased::String AS p,
-                            served_by::String AS sb FROM {_equipo()}.feedback
+                            served_by::String AS sb, model_version::String AS mv FROM {_equipo()}.feedback
                             WHERE {_entre(a, b)} AND request_id::String != '__init__' LIMIT 1000000"""):
             ens = _lista(f["shown"])
             if len(ens) == 10:
                 pf["feedback"][f["rid"]] = (tuple(sys.intern(p) for p in ens), f["c"] or "", f["p"] or "", f["sb"] == "team")
+                pf["version"][f["rid"]] = sys.intern(f["mv"] or "")
                 n += 1
         print(f"  feedback {time.strftime('%H:%M', time.gmtime(a / 1000))} UTC: {n}", flush=True)
         a = b
@@ -237,6 +267,7 @@ class Mundo:
         self.comprados: dict[str, set] = {u: set(s) for u, s in h["compras"].items()}
         self.carrito_antiguo: dict[str, set] = h["carritos"]          # incluye lo comprado: se resta al leer
         self.carrito_hoy: dict[str, set] = {}
+        self.conocidos: set = set(h["productos"])   # productos con actividad en el historial: el resto son NUEVOS
         self.vistas_sub: dict[str, dict] = {u: dict(d) for u, d in h["afinidad"].items()}  # user -> subcat -> n
         self.vistas_p: dict[str, float] = {}
         self.compras_p: dict[str, float] = {}
@@ -381,20 +412,27 @@ class Modelo:
         self._listas: dict = {}
         self._listas_t = 0.0
 
+    @staticmethod
+    def archivo(nombre: str | None = None) -> Path:
+        """data/aprendiz.json, o data/aprendiz_<nombre>.json para tener varios entrenos a la vez (A/B)."""
+        return ARCHIVO_MODELO if not nombre else ARCHIVO_MODELO.with_name(f"aprendiz_{nombre}.json")
+
     @classmethod
-    def cargar(cls) -> "Modelo | None":
-        if not ARCHIVO_MODELO.exists():
+    def cargar(cls, nombre: str | None = None) -> "Modelo | None":
+        archivo = cls.archivo(nombre)
+        if not archivo.exists():
             return None
-        j = json.loads(ARCHIVO_MODELO.read_text(encoding="utf-8"))
+        j = json.loads(archivo.read_text(encoding="utf-8"))
         if list(j["pesos"]) != NOMBRES:  # archivo de otra versión del código: mejor no usarlo que usarlo mal
             return None
         return cls(j["pesos"], j["constante"], j["puestos"], j.get("info"))
 
-    def guardar(self) -> None:
-        ARCHIVO_MODELO.parent.mkdir(parents=True, exist_ok=True)
-        ARCHIVO_MODELO.write_text(json.dumps({"pesos": self.pesos, "constante": self.constante,
-                                              "puestos": [float(x) for x in self.puestos], "info": self.info},
-                                             indent=1, ensure_ascii=False), encoding="utf-8")
+    def guardar(self, nombre: str | None = None) -> None:
+        archivo = self.archivo(nombre)
+        archivo.parent.mkdir(parents=True, exist_ok=True)
+        archivo.write_text(json.dumps({"pesos": self.pesos, "constante": self.constante,
+                                       "puestos": [float(x) for x in self.puestos], "info": self.info},
+                                      indent=1, ensure_ascii=False), encoding="utf-8")
 
     def listas(self, mundo: Mundo, forzar: bool = False) -> dict:
         """Mejores productos (por las dos señales de producto) de la tienda, por categoría y por subcategoría."""
@@ -410,8 +448,16 @@ class Modelo:
             for _, p, c, s in puntos:
                 por_cat[c].append(p)
                 por_sub[s].append(p)
-            self._listas = {"todos": [p for _, p, _, _ in puntos], "cat": dict(por_cat), "sub": dict(por_sub),
-                            "sub_a_cat": _subcategoria_a_categoria(mundo.catalogo)}
+            todos = [p for _, p, _, _ in puntos]
+            # Para explorar: los productos nuevos (sin actividad en el historial) y los que quedan fuera de las
+            # listas de mejores. Sin historial cargado no se sabe qué es nuevo: no se explora con nuevos.
+            conocidos = mundo.conocidos
+            self._listas = {"todos": todos, "cat": dict(por_cat), "sub": dict(por_sub),
+                            "sub_a_cat": _subcategoria_a_categoria(mundo.catalogo),
+                            "nuevos": {c: [p for p in l if p not in conocidos] for c, l in por_cat.items()} if conocidos else {},
+                            "nuevos_todos": [p for p in todos if p not in conocidos] if conocidos else [],
+                            "resto": {c: l[N_CATEGORIA:] for c, l in por_cat.items()},
+                            "resto_todos": todos[N_GLOBAL:]}
             self._listas_t = time.monotonic()
         return self._listas
 
@@ -448,8 +494,49 @@ def candidatos(mundo: Mundo, modelo: Modelo, foto: dict, vistos: list[str], vale
     return [p for p in dict.fromkeys(cand) if vale(p)]
 
 
-def recomendar(peticion: dict, mundo: Mundo, modelo: Modelo, disponibles: set[str]) -> list[str]:
-    """10 product_id distintos, disponibles y nunca ya comprados por ese comprador, de mejor a peor."""
+def toca_explorar(request_id: str) -> bool:
+    """¿Esta petición es de las que exploran? Depende solo del request_id: sale lo mismo en vivo y al analizar."""
+    return bool(request_id) and zlib.crc32(str(request_id).encode()) % 1000 < EXPLORAR_FRACCION * 1000
+
+
+def _al_azar(fuente: list[str] | None, azar: random.Random, vale) -> str | None:
+    """Un producto válido de la lista, elegido al azar (todos con la misma probabilidad). None si no encuentra."""
+    if not fuente:
+        return None
+    for _ in range(INTENTOS_EXPLORAR):
+        p = fuente[azar.randrange(len(fuente))]
+        if vale(p):
+            return p
+    return None
+
+
+def _explorar(request_id: str, mundo: Mundo, modelo: Modelo, foto: dict, vistos: list[str], elegidos: list[str],
+              vale) -> list[str]:
+    """Cambia los huecos 9 y 10 por un producto nuevo y uno de fuera de las listas de mejores. Los dos salen de la
+    categoría que le interesa al comprador (la de lo último visto; sin vistas, la que más mira; si no se sabe nada,
+    de toda la tienda). Los 8 primeros huecos no se tocan."""
+    listas = modelo.listas(mundo)
+    categoria = mundo.catalogo.get(vistos[-1], {}).get("category") if vistos else None
+    if not categoria and foto["vistas_sub"]:
+        por_cat: Counter = Counter()
+        for sub, n in foto["vistas_sub"].items():
+            por_cat[listas["sub_a_cat"].get(sub)] += n
+        categoria = por_cat.most_common(1)[0][0]
+    azar = random.Random(zlib.crc32(str(request_id).encode()))  # misma petición -> misma respuesta
+    salida = list(elegidos)
+    for hueco, de_su_categoria, de_la_tienda in ((HUECO_NUEVO, listas["nuevos"].get(categoria), listas["nuevos_todos"]),
+                                                 (HUECO_RESTO, listas["resto"].get(categoria), listas["resto_todos"])):
+        for fuente in (de_su_categoria, de_la_tienda):
+            p = _al_azar(fuente, azar, lambda p: vale(p) and p not in salida)
+            if p:
+                salida[hueco] = p
+                break
+    return salida
+
+
+def recomendar(peticion: dict, mundo: Mundo, modelo: Modelo, disponibles: set[str], explorar: bool = False) -> list[str]:
+    """10 product_id distintos, disponibles y nunca ya comprados por ese comprador, de mejor a peor.
+    Con explorar=True, en la mitad de las peticiones los huecos 9 y 10 son de exploración (ver `_explorar`)."""
     u, vistos, nuevo = _leer_peticion(peticion)
     foto = mundo.foto(u)
     comprados = foto["comprados"]
@@ -472,6 +559,8 @@ def recomendar(peticion: dict, mundo: Mundo, modelo: Modelo, disponibles: set[st
                 if p not in ya and exigir(p):
                     elegidos.append(p)
                     ya.add(p)
+    if explorar and len(elegidos) == 10 and toca_explorar(peticion.get("request_id") or ""):
+        elegidos = _explorar(peticion["request_id"], mundo, modelo, foto, vistos, elegidos, vale)
     return elegidos
 
 
@@ -656,7 +745,14 @@ def ensayo(catalogo: dict, historial: dict, eventos: list, peticiones: dict, fee
         items = recomendar(peticion, mundo, modelo, disponibles)
         ms = (time.perf_counter() - t0) * 1000
         foto = mundo.foto(u)
+        con_exp = recomendar(peticion, mundo, modelo, disponibles, explorar=True)
         filas.append({
+            "explora": con_exp != items,
+            "exp_invalida": bool(errores_respuesta(con_exp, disponibles)) or any(p in foto["comprados"] for p in con_exp),
+            "exp_mismos_8": con_exp[:8] == items[:8],
+            "exp_nuevo": con_exp[HUECO_NUEVO] not in mundo.conocidos,
+            "exp_resto": con_exp[HUECO_RESTO] != items[HUECO_RESTO],
+            "valor_exp": modelo.valor(senales(mundo, foto, list(vistos), nuevo, con_exp)),
             "nuevo": nuevo, "sin_vistas": not vistos, "ms": ms,
             "invalida": bool(errores_respuesta(items, disponibles)),
             "con_comprado": any(p in foto["comprados"] for p in items),
@@ -693,13 +789,56 @@ def ensayo(catalogo: dict, historial: dict, eventos: list, peticiones: dict, fee
         print(f"    {nombre:<20} n={k:<5} lo que enseñamos {100 * media('valor_nuestro', f):.2f} "
               f"(real: {100 * media('compra_real', f):.2f}) → lista nueva {100 * media('valor_nuevo', f):.2f}")
         r[nombre] = (100 * media("valor_nuestro", f), 100 * media("compra_real", f), 100 * media("valor_nuevo", f))
+    exp = lambda x: x["explora"]  # noqa: E731
+    k = sum(1 for x in filas if exp(x))
+    r["exploracion"] = {"n": k, "invalidas": sum(x["exp_invalida"] for x in filas),
+                        "valor_sin": 100 * media("valor_nuevo", exp), "valor_con": 100 * media("valor_exp", exp)}
+    print(f"  EXPLORACIÓN (explorar=True): exploran {k} de {len(filas)} peticiones ({100 * k / max(len(filas), 1):.0f} %); "
+          f"inválidas o con algo ya comprado: {r['exploracion']['invalidas']}; los 8 primeros huecos intactos en el "
+          f"{100 * media('exp_mismos_8', exp):.0f} %; hueco 9 con producto nuevo {100 * media('exp_nuevo', exp):.0f} %; "
+          f"hueco 10 cambiado {100 * media('exp_resto', exp):.0f} %")
+    print(f"    coste según el modelo en las que exploran (compras/100): sin explorar {r['exploracion']['valor_sin']:.2f} → "
+          f"explorando {r['exploracion']['valor_con']:.2f}")
     return r
+
+
+def informe_exploracion(peticiones: dict, feedback: dict, versiones: dict, historial: dict, horas: float = 3) -> None:
+    """Qué pasó con lo explorado, leído del feedback. Por cada versión, compara las peticiones a las que les tocaba
+    explorar (por su request_id) con las que no. En una versión que NO explora los dos grupos deben salir iguales
+    (sirve de comprobación); en una que explora, la diferencia es lo que aporta y lo que cuesta explorar."""
+    conocidos = set(historial["productos"])
+    ts = [peticiones[rid][0] for rid in feedback if rid in peticiones]
+    if not ts:
+        return
+    desde = max(ts) - horas * 3600 * 1000
+    grupos: dict = defaultdict(lambda: [0, 0, 0, 0, 0, 0, 0])  # n, nuevos h9, clic h9-10, compra h9-10, compra lista, clic lista, nuevos lista
+    for rid, (ens, clic, compra, equipo) in feedback.items():
+        if not equipo or rid not in peticiones or peticiones[rid][0] < desde:
+            continue
+        g = grupos[(versiones.get(rid, ""), toca_explorar(rid))]
+        g[0] += 1
+        g[1] += ens[HUECO_NUEVO] not in conocidos
+        g[2] += clic in (ens[HUECO_NUEVO], ens[HUECO_RESTO])
+        g[3] += compra in (ens[HUECO_NUEVO], ens[HUECO_RESTO])
+        g[4] += bool(compra)
+        g[5] += bool(clic)
+        g[6] += sum(p not in conocidos for p in ens)
+    print(f"\nEXPLORACIÓN en el feedback de las últimas {horas:g} h (respuestas servidas por nosotros)")
+    print(f"  {'versión':<18}{'le tocaba':>10}{'respuestas':>12}{'hueco 9 nuevo':>15}{'clics h9-10':>13}{'compras h9-10':>15}"
+          f"{'compras lista':>15}{'clics lista':>13}{'nuevos/lista':>14}")
+    for (version, toca), g in sorted(grupos.items()):
+        if g[0] < 50:
+            continue
+        print(f"  {version:<18}{'sí' if toca else 'no':>10}{g[0]:>12}{100 * g[1] / g[0]:>13.1f} %{g[2]:>13}{g[3]:>15}"
+              f"{100 * g[4] / g[0]:>13.2f} %{100 * g[5] / g[0]:>11.2f} %{g[6] / g[0]:>14.2f}")
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--sin-descarga", action="store_true", help="no bajar nada nuevo: usar data/aprendiz/")
     ap.add_argument("--ensayo", type=int, default=0, help="nº de peticiones reales para ensayar recomendar()")
+    ap.add_argument("--nombre", default=None,
+                    help="guardar en data/aprendiz_<nombre>.json en vez de data/aprendiz.json (no pisa el que está en vivo)")
     ap.add_argument("--peso-clic", type=float, default=PESO_CLIC,
                     help="cuánto cuenta un clic sin compra como si fuera compra (0 = solo compras)")
     args = ap.parse_args()
@@ -713,6 +852,7 @@ def main() -> None:
         peticiones, feedback = pf["peticiones"], pf["feedback"]
     else:
         eventos, peticiones, feedback = bajar_vivo()
+    versiones = _leer("respuestas.pkl", {}).get("version", {})
     print(f"datos: {len(eventos)} eventos de hoy, {len(peticiones)} peticiones, {len(feedback)} respuestas con feedback")
 
     t0 = time.time()
@@ -724,8 +864,9 @@ def main() -> None:
     if args.ensayo:
         modelo.info["ensayo"] = ensayo(catalogo, historial, eventos, peticiones, feedback, extra["modelo_validacion"],
                                        extra["corte_ms"], args.ensayo)
-    modelo.guardar()
-    print(f"\nguardado {ARCHIVO_MODELO} (no se sube al repo)")
+    informe_exploracion(peticiones, feedback, versiones, historial)
+    modelo.guardar(args.nombre)
+    print(f"\nguardado {Modelo.archivo(args.nombre)} (no se sube al repo)")
 
 
 if __name__ == "__main__":

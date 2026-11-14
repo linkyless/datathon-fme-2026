@@ -1,13 +1,22 @@
 # Estado de Alex
 
 - **Rol:** Evaluación (docs/guias/evaluacion.md)
-- **Actualizado:** sáb 20:40
+- **Actualizado:** sáb 21:45
 
 ## Haciendo ahora
-- **Modelo nuevo listo para un A/B: `src/aprendiz.py`** (regresión logística que aprende SOLO de `team_29.feedback`).
-  Entrenado y validado, NO está en vivo: falta conectarlo (Lester/Leonardo, ver "Necesito de alguien") y medirlo
-  como brazo frente a C. Números en EXPERIMENTOS (sáb 20:30). Reentrenar: `python -m src.aprendiz --ensayo 3000`.
-- Por qué: llevábamos horas cambiando QUÉ producto popular va primero. Lo que mueve la compra en el simulador es la
+- **El aprendiz (`src/aprendiz.py`) gana a C en vivo** (A/B de Lester, desde 19:45 UTC): compras reales 2,03 %
+  (77 de 3.792) frente a 0,83 % (11 de 1.328), diferencia +1,20 puntos, IC 95 % [+0,56, +1,87]. Leaderboard
+  (19:16-20:16 UTC): AP2 1,81 frente a C 0,92; fríos 2,24 frente a 1,45; no fríos 1,54 frente a 0,57. El modelo
+  había estimado 1,82 antes de entrar. Sin vistas (home) no hay diferencia medible (0,54 % frente a 0,40 %).
+- **Listo para Lester, NO en vivo todavía: AP3 (reentreno) + exploración.** Ver "Necesito de alguien".
+  - AP3 = mismo modelo reentrenado con 99.728 respuestas (941 compras), incluido el feedback de AP2. Pesos casi
+    iguales (cambian menos de un 10 %): mismo 1.º que AP2 en el 94,5 % de 3.000 peticiones reales, 9,67 de 10
+    productos en común. Por eso un A/B AP2 frente a AP3 no enseñaría nada: propongo pasar a AP3 sin más.
+  - Exploración (`recomendar(..., explorar=True)`): en la mitad de las peticiones (por el request_id) el hueco 9 es
+    un producto NUEVO y el 10 uno de fuera de las listas de mejores, de la categoría que le interesa al comprador.
+    Ensayo en 4.000 peticiones reales: exploran 2.076, 0 inválidas, 0 con algo ya comprado, los 8 primeros huecos
+    intactos. Coste estimado por el modelo (no medido) en las que exploran: 1,74 → 1,66 compras/100.
+- Por qué el aprendiz: llevábamos horas cambiando QUÉ producto popular va primero. Lo que mueve la compra en el simulador es la
   relación previa del comprador con el producto (carrito, visto, ya comprado) y con su categoría. Ver "Descubierto".
 - **CORRECCIÓN mía (sáb 20:30): el filtro de comprados SÍ es correcto.** Mi "CF vende −44 %" de abajo tenía un
   intervalo que incluía el 0, y el feedback de todo el día dice lo contrario: de 5.240 veces que enseñamos algo
@@ -22,6 +31,18 @@
 - **Fiabilidad**: ~80 % a tiempo en C y CF (16:29-17:10 UTC). Causa: la wifi (estado de Lester).
 
 ## Terminado
+- **Métricas del aprendiz (sáb 21:00)**, último 30 % del día (29.128 respuestas, 333 compras): AUC 0,885 (solo con
+  el puesto 0,718), el comprado es el 1.º del modelo en el 40,8 % de las respuestas con compra y está entre los 3
+  primeros en el 68,2 %; el 5 % de productos mejor puntuados contiene el 52 % de las compras. Accuracy, recall y F1
+  NO sirven aquí (se compra 1 de cada ~900 productos enseñados: decir "nadie compra" acierta el 99,886 %).
+  Calibración en vivo del modelo congelado a las 19:27 UTC sobre las listas de AP2: predijo 1,88 compras/100 y
+  salieron 2,03; por tipo: nuevos 3,24 predicho / 2,67 real, conocidos 1,29 / 1,75 (las señales pesan distinto en
+  cada grupo: mejora pendiente).
+- **Cambios de tienda (sáb 21:00)**: el aprendiz no usa precio, promociones ni tendencias, y hoy los datos no
+  justifican añadirlos (× sobre la compra, IC 95 %): en promoción ×0,91 [0,63-1,31] · precio ×1,04 [0,98-1,11] ·
+  tendencia 30 min ×1,16 [0,97-1,38] · producto nuevo ×1,52 [0,61-3,78] con solo 1.698 enseñados y 4 compras
+  (faltan datos: para eso es la exploración). En `shop.events`, tras una bajada de precio las vistas del producto
+  suben un 11-15 % y las compras por vista casi no cambian.
 - **`src/aprendiz.py` (sáb 20:30)**: modelo de 11 señales entrenado con 87.058 respuestas nuestras (763 compras).
   Pesos (× probabilidad relativa de compra): carrito de hoy sin comprar ×6,1 · visto en la sesión ×5,9 · carrito del
   historial sin comprar ×4,2 · ya comprado ×0,12 · afinidad con la categoría ×25 (de nada a todo) · afinidad con la
@@ -116,13 +137,21 @@ Ponderar por 1/propensity (con tope, p. ej. 50), como hace la R5, y validar con 
   lo que enseñó. Por eso baseline_categoria saca 0.76 de hit_rate pero un SNIPS más bajo que baseline_starter.
 
 ## Necesito de alguien
-- **Lester (Operador)**: conectar `src/aprendiz.py` como brazo A/B frente a C (propongo C al 25 % de control; ahora
-  A7 va al 100 % y no se puede comparar con nada en la misma ventana). Son cinco líneas, están en la cabecera del
-  archivo: `aprendiz.Mundo.al_dia(estado.catalogo)` al arrancar (19 s medido), `mundo.ponerse_al_dia()` cada 1-2 s
-  en el hilo de refresco (una consulta de 0,2-1 s; deja el estado 2,7 s por detrás del servidor),
-  `mundo.catalogo = estado.catalogo` al recargar el catálogo y `aprendiz.recomendar(peticion, mundo, modelo,
-  estado.disponibles)`. Antes de arrancar, en tu máquina: `python -m src.aprendiz` (baja el historial una vez,
-  ~2 min, y crea `data/aprendiz.json`). Probarlo primero con `--sin-envio`.
+- **Lester (Operador)**: poner en vivo AP3 con exploración (tú decides cuándo y el reparto). En tu máquina:
+  1. `git pull` y `python -m src.aprendiz --nombre ap3` (~1,5 min; guarda `data/aprendiz_ap3.json` SIN pisar
+     `data/aprendiz.json`, que es el AP2 que está en vivo).
+  2. En `servicio.py`: cargar `aprendiz.Modelo.cargar("ap3")` y llamar a
+     `aprendiz.recomendar(peticion, MUNDO, modelo, disponibles, explorar=True)`. El Mundo es el mismo de ahora.
+     Hay que reiniciar: el modelo se lee una sola vez al arrancar. Nombre nuevo (`-AP3`) para que la fila salga limpia.
+  3. Opcional, recomendado: si `aprendiz.toca_explorar(peticion["request_id"])` es verdadero, etiquetar esa
+     respuesta con otro sufijo (p. ej. `-AP3x`). Así el coste de explorar se lee en el leaderboard (probabilidad
+     esperada, menos ruido) y no solo en nuestras compras reales.
+  4. Reparto que propongo: todo el tráfico del aprendiz a AP3 (AP2 y AP3 dan casi la misma lista, compararlos no
+     aporta) y C como control pequeño mientras sea práctica. La exploración se mide sola: la mitad que no explora
+     es el grupo de comparación, y `python -m src.aprendiz` imprime el informe al final.
+  Para la final: decidir si se explora o no (cuesta ~0,04 compras/100 en total según el modelo; no medido).
+- **Lester**: el modelo no se recarga sin reiniciar. Si reentrenamos cada cierto tiempo, convendría recargar
+  `Modelo.cargar(...)` cuando cambie el archivo.
 - **Lester**: retiro lo de "volver a C / invertir el reparto": el filtro de comprados es correcto (ver corrección).
   Y refrescar `comprados` más a menudo que cada 30 min (con `Mundo` va al día solo, evento a evento).
 - **Leonardo (Ranking)**: retiro lo de "no filtrar nunca lo comprado". Si prefieres llamarlo desde `ranking.py` con

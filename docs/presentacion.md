@@ -81,17 +81,16 @@ en el navegador; `--loop 60` lo refresca cada minuto para la demo). **[PENDIENTE
 diapositiva + números frescos 30 min antes de presentar]**
 
 ## 4. Cómo validamos antes de arrisgo — y el episodio que lo demuestra
-## 4. Cómo validamos antes de arriesgar (sin fórmulas) — y el episodio que lo demuestra
+## 4. Cómo validamos antes de arriesgar (sin fórmulas) — y el episodio del anuncio
 
 **La regla que nos salva: confiar en el feedback medido > en la documentación > en los datos exportados.**
-Episodio real del sábado: la documentación oficial decía "quien ya compró un producto no lo quiere otra vez",
-y el starter filtraba lo comprado. Nuestro evaluador lo midió y dijo lo contrario: **el 61,6 % de las compras
-del tramo de test son recompras** — con el filtro, el acierto de compra caía de 0,86 a 0,32. Dejamos de
-aplicar el filtro y subimos la conversión; a las ~17:40 los organizadores lo confirmaron con un mensaje al
-equipo ("a veces el cliente te da requisitos que no cuadran con los datos... confía en el feedback loop más
-que en los docs"). Metodología vengada en menos de 4 horas.
-
-Las herramientas de validación:
+Episodio real del sábado: la pista oficial decía "quien ya compró un producto no lo quiere otra vez"; el
+historial decía lo contrario (62 % de las compras del test eran recompras); y el mensaje de los
+organizadores de las 17:40 vino a decir que **el modelo oculto puede no estar de acuerdo con ninguno de los
+dos**. El A/B en vivo con datos de la API (~2.800 peticiones por brazo) resolvió la disputa con números:
+total CF (con filtro) 1,06 % vs C (sin) 1,02 %, pero en fríos C 1,73 % vs CF 1,41 % — y en vivo NO hay
+recompras. Conclusión: ni la documentación ni el historial ganan por defecto; se apunta en EXPERIMENTOS y
+se decide con la API. Las herramientas de validación:
 - El historial del carrusel está **sesgado** (solo enseñaba lo popular y "algo de azar"). En esos datos,
   "lo popular" siempre parece bueno: evaluar sin corregir decide mal.
 - Corrección en palabras (IPS/SNIPS): cada acierto del historial pesa más cuanto menos probable era que lo

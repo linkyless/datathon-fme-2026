@@ -137,7 +137,7 @@ DECISIONES = {
     "frio": "Si crece el mundo frio, sube la prioridad de populares por contexto y de productos nuevos embebidos.",
     "frio_conversion": "Decide si al frio le servimos populares por contexto (con conversion propia) o el ranking general.",
     "tendencias": "Subcategorías con ratio > 1: candidatas a entrada del ranker por tendencia y a exploracion (slots 8-10).",
-    "recompras": "Recomprar es lo normal (y el modelo oculto lo premia): el filtro de 'no repetir lo comprado' debe estar APAGADO; medirlo aquí evita que vuelva a encenderse sin datos.",
+    "recompras": "62 % de las compras del HISTORIAL son recompras, pero EN VIVO no hay recompras (organizadores 17:40). Consecuencias: (1) Alex quita las filas de recompra del test offline; (2) el A/B dice: total CF 1,06 vs C 1,02, fríos C 1,73 vs CF 1,41 — diferencias pequeñas, seguir midiendo antes de fijar el filtro.",
     "catalogo": "Cuánto se mueve la tienda: cadencia de refresco del catálogo y de re-embebido de productos nuevos.",
 }
 

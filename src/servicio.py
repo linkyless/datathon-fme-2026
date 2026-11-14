@@ -167,17 +167,18 @@ def refrescar(estado: Estado, parar: threading.Event) -> None:
             f"comprados={len(estado.comprados)} contexto={len(estado.populares_contexto)} "
             f"vecinos={len(estado.vecinos)}")
 
-    def bucle_nuevos() -> None:
-        """Hilo aparte: HelmCode puede tardar minutos (429 = reintenta sin fin). Nunca debe frenar el stock."""
+    def bucle_lento() -> None:
+        """Hilo aparte para lo que tarda (pesadas: 13 s con buena red, 90 s con mala; HelmCode: minutos si hay
+        429). Así el stock se sigue actualizando cada segundo pase lo que pase aquí."""
         while not parar.is_set():
+            intentar("pesadas", 1800, pesadas)
             intentar("nuevos", 300, nuevos)
-            parar.wait(5)
+            parar.wait(1)
 
-    threading.Thread(target=bucle_nuevos, name="embeber", daemon=True).start()
+    threading.Thread(target=bucle_lento, name="lento", daemon=True).start()
     while not parar.is_set():
         intentar("stock", 1, stock)
         intentar("catalogo", 15, cat)
-        intentar("pesadas", 1800, pesadas)  # antes que "nuevos": las co-visitas no esperan a HelmCode
         intentar("populares", 600, populares)
         parar.wait(0.2)
 

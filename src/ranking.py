@@ -57,10 +57,21 @@ LAMBDA_PRECIO = 0.0
 """Desempate por ingreso: puntos × (1 + LAMBDA_PRECIO · log(precio)). El desempate oficial es el ingreso esperado.
 El deep research propone 0.05-0.1. APAGADO por defecto."""
 
+TENDENCIA = 0.0
+"""R4. Exponente η del empujón por tendencia: puntos × lift^η, con lift de src/tendencias.py (1 = normal,
+3 = el triple de actividad que de costumbre en la última media hora). La investigación propone 0.3-0.5.
+Se aplica a los candidatos de co-visitas Y al orden de las listas de relleno (populares de la categoría y
+populares de siempre), que es lo que reciben la v0 y los compradores sin vistas. APAGADO por defecto.
+Chequeo de Leonardo en vivo (sáb ~17:00): los productos con lift >= 1.3 siguen la media hora SIGUIENTE a
+1,14× su ritmo normal (mediana; media 1,32) y los de lift < 0.8 a 0,84× (media 0,91): la tendencia se mantiene."""
+
+RELLENO_REORDENADO = 30
+"""Con tendencia encendida, cuántos primeros puestos de cada lista de relleno se reordenan."""
+
 PARAMS: dict = {"decaimiento": DECAIMIENTO, "revisitas": REVISITAS, "afin_sub": AFIN_SUB,
                 "afin_marca": AFIN_MARCA, "normalizar_fila": NORMALIZAR_FILA,
                 "precio_coherente": PRECIO_COHERENTE, "lambda_precio": LAMBDA_PRECIO,
-                "usar_vecinos": False, "usar_contexto": False}
+                "usar_vecinos": False, "usar_contexto": False, "tendencia": TENDENCIA}
 """Parámetros por defecto. Las variantes A/B (src/servicio.py, Operador) pasan otro diccionario con las mismas
 claves: así se prueban variantes en vivo sin tocar este archivo. Cada clave nueva se añade aquí con su valor.
 usar_vecinos / usar_contexto: piezas de Artai (D3, D4). APAGADAS hasta que Evaluación o un A/B digan que suben:
@@ -78,6 +89,15 @@ def _precio(estado: Estado, pid: str) -> float:
         return float(estado.catalogo.get(pid, {}).get("price_eur") or 0)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _por_tendencia(lista: list[str], lift: dict[str, float], eta: float) -> list[str]:
+    """Reordena los primeros RELLENO_REORDENADO de una lista de populares. Cada puesto vale 1/log2(puesto + 2)
+    (el 1º vale 1, el 2º 0,63, el 3º 0,5...) multiplicado por lift^η: un producto en plena subida adelanta unos
+    pocos puestos, pero uno normal no se hunde. El resto de la lista queda igual detrás."""
+    cabeza = lista[:RELLENO_REORDENADO]
+    puntos = {pid: lift.get(pid, 1.0) ** eta / math.log2(pos + 2) for pos, pid in enumerate(cabeza)}
+    return sorted(cabeza, key=puntos.__getitem__, reverse=True) + lista[RELLENO_REORDENADO:]
 
 
 def recommend(peticion: dict, estado: Estado, params: dict | None = None) -> list[str]:
@@ -132,6 +152,14 @@ def recommend(peticion: dict, estado: Estado, params: dict | None = None) -> lis
             if p["lambda_precio"] > 0:
                 puntos[pid] *= 1 + p["lambda_precio"] * math.log(max(precio, 1.0))
 
+    # 3c) Tendencias (R4): lo que se está moviendo ahora sube; lo que se ha parado baja un poco.
+    #     `tendencias` lo rellena el servicio; con getattr funciona aunque el Estado aún no tenga el campo.
+    lift = getattr(estado, "tendencias", None) or {}
+    con_tendencia = p["tendencia"] > 0 and bool(lift)
+    if con_tendencia:
+        for pid in puntos:
+            puntos[pid] *= lift.get(pid, 1.0) ** p["tendencia"]
+
     # 4) Re-visitas: lo que ya ha mirado y no ha comprado. Cada producto cuenta una vez, por su vista más reciente.
     if p["revisitas"] > 0 and vistos:
         tope = max(puntos.values(), default=1.0)
@@ -151,7 +179,11 @@ def recommend(peticion: dict, estado: Estado, params: dict | None = None) -> lis
     ctx = peticion.get("context") or {}
     por_contexto = (estado.populares_contexto.get((str(ctx.get("device", "")), str(ctx.get("region", ""))), [])
                     if p["usar_contexto"] else [])
-    for fuente in (de_su_categoria, por_contexto, estado.populares, _todos(estado)):
+    populares = estado.populares
+    if con_tendencia:
+        de_su_categoria = _por_tendencia(de_su_categoria, lift, p["tendencia"])
+        populares = _por_tendencia(populares, lift, p["tendencia"])
+    for fuente in (de_su_categoria, por_contexto, populares, _todos(estado)):
         for pid in fuente:
             if len(elegidos) == 10:
                 return elegidos

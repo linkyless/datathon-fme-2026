@@ -1,12 +1,23 @@
 # Estado de Leonardo
 
 - **Rol:** Ranking (docs/guias/ranking.md)
-- **Actualizado:** sáb 14/11 ~16:15
+- **Actualizado:** sáb 14/11 ~17:10
 
 ## Haciendo ahora
-- Decidir con Lester un A/B en vivo v0 frente a v1 (co-visitas). Siguiente: R4 (tendencias).
+- R4 hecha (falta que el servicio rellene `tendencias`). Siguiente: R5 (regresión logística).
 
 ## Terminado
+- R4 tendencias: `cargar_tendencias(hasta)` en src/tendencias.py -> `{product_id: lift}`. Lift = actividad de
+  los últimos 30 min (vista 1, carrito 6, compra 3) / ritmo normal de las 3 h anteriores, con prior 10 y
+  recortado a [0.5, 3]. En vivo: 5.144 productos, 0,74 s; offline (`hasta='2026-11-07'`): 4.722, 0,30 s.
+  En vivo hay más movimiento que en el historial (p90 del lift 1,38 frente a 1,14).
+  ¿La tendencia dura? (chequeo mío en vivo) los productos con lift >= 1.3 tienen la media hora SIGUIENTE 1,14×
+  su ritmo normal (mediana; media 1,32); los de lift < 0.8, 0,84× (media 0,91). Sí se mantiene.
+  En ranking.py: clave `tendencia` (η de lift^η) en PARAMS, APAGADA (0.0). Multiplica los puntos de co-visitas y
+  reordena los 30 primeros de los populares de la categoría y de los populares de siempre (llega también a la
+  v0 y a los fríos). Sobre 5.000 peticiones del test con tendencias en vivo: 0 inválidas, 0,04 ms/petición;
+  con η=0.3 cambia el orden de todas las listas pero nunca el 1º; con η=0.5 cambia el 1º en 383 de 5.000.
+  Offline no se puede medir bien (en el historial apenas hay modas): medir con A/B en vivo.
 - R1: `cargar_covisitas(hasta)` en src/covisitas.py. Con `hasta='2026-11-07'`: co-visitas para 5.000 productos,
   20 vecinos cada uno. La consulta tarda 6,3 s la primera vez; después se lee de `data/covisitas_<hasta>.json`
   (0,07 s). `recommend()` sobre 500 sesiones de history_sessions posteriores al corte: 0 inválidas, 403 usan
@@ -56,13 +67,10 @@
   En vivo (`hasta=None`) el archivo es `data/covisitas_todo.json`.
 
 ## Necesito de alguien
-- **Evaluación (Alex):** mide `e-samen-v1` (co-visitas + no repetir lo comprado) contra el baseline con
-  `hasta='2026-11-07'`. Para ver el efecto de cada pieza por separado, vacía `estado.comprados` o
-  `estado.covisitas` antes de llamar a `recommend()`.
-- **Evaluación (Alex):** apunta en docs/EXPERIMENTOS.md que `e-samen-v1` = v0 + co-visitas (pesos vista 1,
-  carrito 6, compra 3; sin dividir por popularidad; 20 vecinos) + filtro de productos ya comprados. El archivo es tuyo, por eso no lo toco.
-- **Evaluación (Alex):** mide también la candidata a v2: `recommend(p, e, {"revisitas": 0.3})` frente a la v1
-  (por defecto `revisitas` = 0). Si mejora, la enciendo y subo `NOMBRE` a `e-samen-v2`.
+- **Operador (Lester), R4:** campo `tendencias: dict[str, float]` en el `Estado` (product_id -> lift) y que el
+  refresco lo rellene con `tendencias.cargar_tendencias(None)` cada 1-2 min (tarda < 1 s). En `construir(hasta)`:
+  `tendencias.cargar_tendencias(hasta)`. ranking.py ya lo lee con `getattr`, así que no rompe nada mientras no esté.
+  Para probarlo en A/B basta `{"tendencia": 0.3}` en una variante.
 - **Operador (Lester):** `src/prueba_local.py` da por hecho el orden de la v0 (`items[0] == "p_030"` sin piezas y
   `"p_003"` con piezas). Con re-visitas encendidas lo ya visto va primero y esas dos líneas fallan aunque la
   respuesta sea válida. Cuando se enciendan, habrá que pasar `{"revisitas": 0}` en esa prueba o cambiar lo esperado.

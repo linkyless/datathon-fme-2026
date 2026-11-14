@@ -12,7 +12,8 @@ Reglas: NUNCA hace consultas a RawTree (solo lee `estado`), tarda < 5 ms y SIEMP
 `estado.disponibles`. Si una pieza del Estado está vacía, se salta y se usa la siguiente.
 
 ESTADO: versión inicial que ya combina las piezas en cuanto existan. Mientras covisitas, comprados,
-populares_contexto y vecinos estén vacíos, se comporta EXACTAMENTE como el baseline.
+populares_contexto y vecinos estén vacíos, se comporta como el baseline DE LAS DIAPOSITIVAS (más vendidos de la
+categoría de lo último visto) y, si no hay vistas, como el del starter (más vendidos de siempre).
 """
 from __future__ import annotations
 
@@ -20,8 +21,8 @@ from collections import Counter
 
 from src.estado import Estado
 
-NOMBRE = "v0-esqueleto"
-"""Va en model_version (el Operador le añade el hash del commit)."""
+NOMBRE = "v0-categoria"
+"""Va en model_version (el Operador le añade el hash del commit). Formato: v<N>-<qué hace>, p. ej. v1-covisitas."""
 
 DECAIMIENTO = 0.7
 """Peso de cada vista hacia atrás: la última vale 1, la anterior 0.7, la otra 0.49..."""
@@ -49,10 +50,14 @@ def recommend(peticion: dict, estado: Estado) -> list[str]:
 
     elegidos = [pid for pid, _ in puntos.most_common() if vale(pid)][:10]
 
-    # 3) Relleno: populares de su tipo de comprador, luego populares de siempre, luego cualquiera disponible.
+    # 3) Relleno, en este orden: más vendidos de la categoría de lo último que vio (el baseline de las
+    #    diapositivas), populares de su tipo de comprador, populares de siempre y cualquiera disponible.
+    #    (Se asume que recent_views va de más antiguo a más reciente, como en el cuaderno oficial.)
+    ultima_categoria = str(estado.catalogo.get(vistos[-1], {}).get("category", "")) if vistos else ""
+    de_su_categoria = estado.populares_categoria.get(ultima_categoria, [])
     ctx = peticion.get("context") or {}
     por_contexto = estado.populares_contexto.get((str(ctx.get("device", "")), str(ctx.get("region", ""))), [])
-    for fuente in (por_contexto, estado.populares, sorted(estado.disponibles)):
+    for fuente in (de_su_categoria, por_contexto, estado.populares, sorted(estado.disponibles)):
         for pid in fuente:
             if len(elegidos) == 10:
                 return elegidos

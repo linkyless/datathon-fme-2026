@@ -10,14 +10,15 @@ petición. Un simulador oculto decide si el comprador hace clic y compra. Ganamo
 (los 10 más vendidos de siempre en stock). Detalles completos: `docs/reto.md`. API y SQL de RawTree: `docs/rawtree.md`.
 
 ## Con quién hablas
-El equipo son cuatro estudiantes (Lester, Leonardo, Alex, Artai). **La mayoría somos principiantes** en ML, SQL y Git.
+El equipo son cuatro personas (Lester, Leonardo, Alex, Artai). Cada uno tiene que poder explicar al jurado todo
+lo que hace su parte, así que la prioridad es que lo entienda, no solo que funcione.
 - Explica lo que haces en español sencillo. Cualquier término técnico nuevo, explícalo en una frase la primera vez.
 - Antes de editar más de un archivo, di en 3-5 líneas qué vas a hacer y espera un "ok".
 - Si algo es ambiguo, pregunta UNA cosa concreta en vez de suponer.
 - Al acabar, di: qué cambiaste, cómo lo comprobaste y qué falta.
 
 ## Reglas que NUNCA se rompen
-1. **Claves**: `RAWTREE_API_KEY`, `TEAM_ID` y la clave de HelmCode viven solo en `.env` o en `/connect`.
+1. **Claves**: `RAWTREE_API_KEY` y la clave de HelmCode viven solo en `.env` o en `/connect` (`TEAM_ID` = `team_29` no es secreto).
    NUNCA las escribas en código, logs, commits, docs ni mensajes. NUNCA leas ni muestres el contenido de `.env`.
 2. **Un solo servicio en vivo**: solo el OPERADOR (ver `docs/ROADMAP.md`) ejecuta el servicio que envía a
    `submissions`. Nadie más lo lanza, ni "para probar": dos instancias = respuestas duplicadas. Para probar, usa
@@ -58,6 +59,8 @@ src/estado.py        ← el contrato: qué sabe recommend() · src/ranking.py �
 docs/estado/         ← un archivo por persona docs/procedimientos/ ← pasos de /empezar, /handoff, /eval...
 docs/DECISIONES.md   docs/EXPERIMENTOS.md
 docs/CONTEXTO.md     ← todo lo ocurrido antes de empezar a programar (léelo una vez)
+docs/apertura.md     ← lo que dijeron las diapositivas oficiales (baseline, pistas)
+docs/competencia.md  ← fotos del leaderboard y lo que enseñan · docs/deep_research.md ← prompt de investigación
 .githooks/pre-commit ← bloquea commits con claves o datos
 .claude/skills/rawtree/ ← skill OFICIAL de RawTree para agentes (no la edites)
 ```
@@ -87,7 +90,7 @@ python starter/recommender.py        # baseline oficial EN VIVO (solo el operado
 4. Dependencia nueva → añádela a `requirements.txt` en el mismo commit.
 5. Python 3.11+, funciones pequeñas con nombres claros, comentarios en español solo donde aporten.
 
-## Git (versión principiante)
+## Git (lo básico)
 - Como cada uno solo toca sus archivos, se trabaja directamente en `main`: `git pull --rebase` → cambios →
   `python -m src.prueba_local` → commit → `git pull --rebase` → `git push`. Si `prueba_local` falla, no se sube.
 - Commits pequeños en español: `coview: filtra productos ya comprados`. Añade archivos concretos (`git add src/x.py`), nunca `git add .` a ciegas.

@@ -8,8 +8,8 @@
 
 ## Terminado
 - Clave de RawTree recogida (team_29) y probada.
-- Baseline oficial EN VIVO desde las 12:27 en `C:\Users\linky\datathon-fme-2026`. No pararlo.
-- Repo subido a GitHub (`linkyless/datathon-fme-2026`, en `E:\Programming\datathon\datathon-fme-2026`) e invitaciones enviadas.
+- Baseline oficial EN VIVO desde las 12:27 en su carpeta aparte. No pararlo.
+- Repo subido a GitHub  e invitaciones enviadas.
 - Reparto en docs/guias/ y esqueleto de src/ (contrato en src/estado.py).
 
 ## Descubierto (cosas que los demás deben saber)

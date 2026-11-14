@@ -36,9 +36,20 @@ no un resumen general.
 - Nota del jurado (30 % del total): método validado offline antes de ir en vivo, aprender del stream
   (feedback, exploración, tendencias, precios, cold start), buen uso de la base de datos y saber explicarlo.
 
+## Lo que ya vemos en el leaderboard de práctica (1 hora, ~40 equipos)
+- Baseline (más vendidos de siempre): conversión 0,66 %, 0,147 €/petición.
+- "Más vendidos de la categoría de lo último visto": 0,79 % (+20 %).
+- Mejor equipo ("v2-HYDRA-explora", parece un bandit con exploración): 0,85 %, 0,32 €/petición.
+- Referencia de los organizadores: 2,09 % y 0,93 €/petición (3× la conversión y 6× el ingreso del baseline, así
+  que enseña productos más caros). El oráculo está aún más arriba.
+- Equipos que fueron directos a gradient boosting: uno por DEBAJO del baseline (0,59 %) y otro con solo el 61 %
+  de respuestas a tiempo.
+Pregunta clave: ¿qué puede hacer la referencia para estar a 3× y qué nos dice eso del modelo oculto (peso del
+precio, de la categoría, de la posición)?
+
 ## El equipo
-4 estudiantes, buenos en algoritmos y matemáticas pero SIN experiencia en ML. Programamos con agentes de IA
-(Claude Code) en Python. Quedan ~20 horas. Hay que poder explicar todo al jurado.
+4 personas con buena base de algoritmos y matemáticas. Programamos en Python con agentes de IA (Claude Code).
+Quedan ~20 horas. Priorizamos lo que se pueda construir, validar y explicar al jurado en ese tiempo.
 
 ## Preguntas
 
@@ -62,7 +73,7 @@ no un resumen general.
 
 ### C. Reordenar con un modelo ("el modelo grande")
 6. Arquitectura en dos etapas (candidatos + learning-to-rank con LightGBM LambdaRank o similar), como en
-   OTTO: qué features importan más, versión mínima viable y cuántas horas lleva a principiantes.
+   OTTO: qué features importan más, versión mínima viable y cuántas horas lleva.
 7. Entrenar un ranker con un log sesgado: counterfactual learning-to-rank (Joachims et al. 2017, IPS en el
    entrenamiento), estimación del sesgo de posición (regression EM, Wang et al. 2018).
 8. ¿Qué objetivo optimizar: P(clic), P(compra | clic), P(compra) o ingreso esperado, dado que puntúa la
@@ -110,7 +121,7 @@ no un resumen general.
 
 ## Formato de la respuesta
 1. Tabla final con TODAS las técnicas candidatas ordenadas por (ganancia esperada en ESTE problema) /
-   (esfuerzo para principiantes), con horas estimadas y riesgo.
+   (esfuerzo), con horas estimadas y riesgo.
 2. Para cada técnica recomendada: qué es en 3 frases sencillas, por qué encaja aquí, papers/soluciones de
    referencia con enlace, cómo implementarla en Python (librerías), cómo validarla offline con nuestro log y
    errores típicos.

@@ -4,7 +4,7 @@
 vivo sin huecos ni duplicados. Eres el único que lanza el servicio y el que decide qué versión va a producción.
 
 **Tus archivos:** `src/rawtree.py`, `src/catalogo.py`, `src/estado.py`, `src/servicio.py`, `src/prueba_local.py`.
-**Regla de oro:** el baseline de `C:\Users\linky\datathon-fme-2026` sigue en marcha hasta la tarea O3. No lo toques.
+**Regla de oro:** el baseline (su carpeta aparte, ver `CLAUDE.local.md`) sigue en marcha hasta la tarea O3. No lo toques.
 
 **Con quién te cruzas:**
 - **Alex** te dice qué versión es "apta". Sin su medición, nada entra en vivo.
@@ -16,11 +16,11 @@ vivo sin huecos ni duplicados. Eres el único que lanza el servicio y el que dec
 ## O1 · Preparar este repo y probar el catálogo — hasta las 13:45
 En una PowerShell NUEVA (no la del baseline):
 ```powershell
-cd E:\Programming\datathon\datathon-fme-2026
+cd <carpeta de este repo>
 py -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-Copy-Item C:\Users\linky\datathon-fme-2026\.env .env      # copia la clave sin mostrarla
+Copy-Item <carpeta del baseline>\.env .env      # copia la clave sin mostrarla
 python -m src.prueba_local
 ```
 Pega esto a tu agente:

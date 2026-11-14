@@ -30,16 +30,19 @@ Pega esto a tu agente (usa plan mode, Shift+Tab):
 >    mismas filas.
 > 3. Estado offline: `src.estado.construir(hasta=CUT)`, guardado en data/estado_<CUT>.pkl. Opción
 >    `--recalcular` para rehacerlo cuando cambie alguna pieza.
-> 4. Dos políticas: "baseline" = `ranking.recommend` con un Estado que solo tiene catalogo, disponibles y
->    populares (el resto vacío); "actual" = `ranking.recommend` con el Estado completo. Convierte cada fila en
+> 4. Tres políticas, todas con `ranking.recommend`: "baseline_starter" = Estado solo con catalogo, disponibles y
+>    populares (el resto vacío; es lo que hace starter/recommender.py); "baseline_categoria" = lo mismo más
+>    populares_categoria (es el baseline de las diapositivas, ver docs/apertura.md); "actual" = el Estado
+>    completo. Convierte cada fila en
 >    un diccionario con request_id, ts, user_id, context y recent_views (comprueba con DESCRIBE su formato).
 > 5. Métricas del cuaderno (hit_rate@10, IPS y SNIPS del slot 1, slot1_matches) y además purchase_hit@10
 >    (¿lo comprado está en nuestros 10?). Para todo el test y para el segmento frío (recent_views vacío).
 > 6. Imprime una tabla y el `ranking.NOMBRE` medido.
 > Ejecútalo y enséñame la tabla.
 
-**Hecho cuando:** sale la tabla y, con las piezas aún vacías, "baseline" y "actual" dan **exactamente lo mismo**
-(es la prueba de que el evaluador es correcto). Apunta esa fila en `docs/EXPERIMENTOS.md`. Commit y push.
+**Hecho cuando:** sale la tabla y, con las piezas aún vacías, "baseline_categoria" y "actual" dan **exactamente
+lo mismo** (es la prueba de que el evaluador es correcto). Compara siempre contra los DOS baselines: no sabemos
+cuál es el 0 oficial. Apunta esa fila en `docs/EXPERIMENTOS.md`. Commit y push.
 
 ## E2 · Medir cada versión que te pase Ranking — toda la tarde
 Cuando Ranking avise ("mide v1-covisitas"):

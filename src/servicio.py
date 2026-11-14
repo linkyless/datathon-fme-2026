@@ -395,6 +395,7 @@ def main() -> None:
     ap.add_argument("--relevo", action="store_true", help="prepararse y esperar Enter antes de empezar")
     ap.add_argument("--v2", action="store_true", help="usar VARIANTES_V2 (A/B C / V2 / V3, 1/3 cada uno)")
     ap.add_argument("--ap3", action="store_true", help="usar VARIANTES_AP3 (AP3 frente a AP3 + exploración, 50/50)")
+    ap.add_argument("--ap3-solo", action="store_true", help="todo el tráfico a AP3, sin exploración ni control")
     ap.add_argument("--ap", action="store_true", help="usar VARIANTES_AP (C 1/4, aprendiz 3/4)")
     ap.add_argument("--duracion", type=float, default=0, help="segundos hasta pararse solo (0 = nunca)")
     args = ap.parse_args()
@@ -405,6 +406,8 @@ def main() -> None:
         VARIANTES = VARIANTES_AP
     if args.ap3:
         VARIANTES = VARIANTES_AP3
+    if args.ap3_solo:
+        VARIANTES = [("-AP3", {"_aprendiz": "ap3"})]
 
     mv = version_modelo()
     log(f"arrancando {mv} | equipo {TEAM} | {'SIN ENVÍO (prueba)' if args.sin_envio else 'EN VIVO'} | variantes {[v for v, _ in VARIANTES]}")

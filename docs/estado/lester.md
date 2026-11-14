@@ -1,12 +1,11 @@
 # Estado de Lester
 
 - **Rol:** Operador (docs/guias/operador.md)
-- **Actualizado:** sáb 23:10
+- **Actualizado:** sáb 23:20
 
 ## Haciendo ahora
-- **EN VIVO desde 21:43: A/B `e-samen-v1-AP3` (1/2) frente a `e-samen-v1-EXP1`/`-EXP1x` (1/2)** (`python -m src.servicio --ap3`).
-  AP3 = aprendiz de Alex reentrenado (`python -m src.aprendiz --nombre ap3` → `data/aprendiz_ap3.json`).
-  EXP1 = AP3 con exploración; la mitad que explora sale como -EXP1x. Coste de explorar: EXP1x frente a AP3.
+- **EN VIVO desde sáb 23:16: `e-samen-v1-AP3` al 100 %, sin exploración** (`python -m src.servicio --ap3-solo`).
+  AP3 = aprendiz de Alex reentrenado (`data/aprendiz_ap3.json`). La exploración (EXP1/EXP1x) estuvo 21:43-23:16.
 - Antes, AP2 frente a C (20:47-21:43): AP2 gana (Alex: compras reales 2,03 % frente a 0,83 %, IC [+0,56, +1,87]).
 - Lectura del A/B a las 22:30 (API, 21:29-22:29): AP3 1,75 · EXP1 1,84 · **EXP1x 1,49**. Explorar cuesta ~0,3 puntos
   en las peticiones que exploran (el modelo estimaba 0,08). Como explora 1 de cada 4 peticiones nuestras, el equipo

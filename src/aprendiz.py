@@ -4,6 +4,7 @@
     python -m src.aprendiz --ensayo 3000   # además ensaya recomendar() sobre peticiones reales (NO envía nada)
     python -m src.aprendiz --sin-descarga  # reentrena con lo que ya hay en data/aprendiz/
     python -m src.aprendiz --nombre ap3    # guarda en data/aprendiz_ap3.json SIN pisar data/aprendiz.json (para un A/B)
+    python -m src.aprendiz --nombre ap7c --sin misma_sub   # el mismo entreno sin una señal (control de un A/B limpio)
 
 Por qué (medido el sáb 14/11 con 77.680 respuestas nuestras): lo que más mueve la compra en el simulador no es qué
 producto popular va primero, sino la relación previa de ESE comprador con ESE producto y con su categoría:
@@ -37,6 +38,11 @@ A/B entre dos entrenos (p. ej. AP2 congelado frente a AP3 reentrenado), en la m�
     cp data/aprendiz.json data/aprendiz_ap2.json          # congela los pesos que están en vivo
     python -m src.aprendiz --nombre ap3                   # reentrena y guarda aparte
     aprendiz.Modelo.cargar("ap2") / aprendiz.Modelo.cargar("ap3")   # un modelo por brazo, el mismo Mundo para los dos
+
+AP7 (sáb noche) = el mismo modelo con una señal más, `misma_sub`. Para un A/B limpio, en la máquina del servicio:
+    python -m src.aprendiz --nombre ap7                          # con la señal (aprendida del feedback: ×1,39)
+    python -m src.aprendiz --sin-descarga --nombre ap7c --sin misma_sub   # control: mismos datos, sin ella
+    aprendiz.recomendar(peticion, mundo, Modelo.cargar("ap7"), disponibles, forzar={"misma_sub": 3.0})   # brazo fuerte
 
 Exploración (`recomendar(..., explorar=True)`): en la mitad de las peticiones (EXPLORAR_FRACCION, elegidas por el
 request_id) los huecos 9 y 10 dejan de ser los del modelo y enseñan un producto NUEVO y uno de FUERA de las listas
@@ -105,10 +111,17 @@ SENALES = [
     ("tasa", "log de compras por vista del producto (suavizado)"),
     ("sin_vistas", "la petición no trae recent_views (home). No cambia el orden: ajusta el nivel"),
     ("nuevo", "comprador nuevo (is_new_user). No cambia el orden: ajusta el nivel"),
+    ("misma_sub", "misma subcategoría que lo último visto, en productos que NO son suyos (ni carrito ni visto)"),
 ]
 """Pocas a propósito. Probadas y quitadas el sáb 14/11 porque no mejoraban la validación (cada una movía el error
-menos de un 0,1 %): es lo último visto, misma subcategoría que lo último visto, lo miró hoy fuera de la sesión,
-dispositivo, y "sabemos algo del comprador" (sustituida por `nuevo`)."""
+menos de un 0,1 %): es lo último visto, lo miró hoy fuera de la sesión, dispositivo, y "sabemos algo del comprador"
+(sustituida por `nuevo`).
+`misma_sub` se añadió el sáb por la noche (AP7; AP4-AP6 son las variantes de orden del Operador): en las compras
+del historial, los más vendidos de la subcategoría de lo último visto aciertan el 20,5 % (recall@10 de
+`python -m src.evaluar --recall`) frente al 9,2 % de la afinidad de categoría; en nuestro carrusel el efecto es
+menor (×1,47 en productos sin relación; nada en los suyos).
+Las señales nuevas van SIEMPRE al final de la lista: un modelo guardado antes de existir una señal no la trae y
+se carga igual, con peso 0 para ella (así AP3 sigue dando exactamente las mismas listas)."""
 NOMBRES = [n for n, _ in SENALES]
 _I = {n: i for i, n in enumerate(NOMBRES)}
 
@@ -374,6 +387,7 @@ def senales(mundo: Mundo, foto: dict, vistos: list[str], nuevo: bool, candidatos
         d = cat.get(p, {})
         comprado = p in foto["comprados"]
         pop, tasa = mundo.numeros_producto(p)
+        suyo = p in foto["carrito_hoy"] or p in foto["carrito_antiguo"] or p in en_sesion
         X[i] = (p in foto["carrito_hoy"],
                 p in foto["carrito_antiguo"],
                 p in en_sesion and not comprado,
@@ -382,7 +396,8 @@ def senales(mundo: Mundo, foto: dict, vistos: list[str], nuevo: bool, candidatos
                 math.sqrt(foto["vistas_sub"].get(d.get("subcategory"), 0) / total) if total else 0.0,
                 bool(ultimo) and d.get("category") == d_ult.get("category"),
                 pop, tasa,
-                not vistos, nuevo)
+                not vistos, nuevo,
+                bool(ultimo) and not suyo and not comprado and d.get("subcategory") == d_ult.get("subcategory"))
     return X
 
 
@@ -404,8 +419,8 @@ class Modelo:
     """Pesos de la regresión logística + las listas de "mejores" para sacar candidatos."""
 
     def __init__(self, pesos: dict[str, float], constante: float, puestos: list[float], info: dict | None = None):
-        self.pesos = pesos
-        self.w = np.array([pesos[n] for n in NOMBRES])
+        self.pesos = pesos                         # solo las señales con las que se entrenó este modelo
+        self.w = np.array([pesos.get(n, 0.0) for n in NOMBRES])   # las que no tiene pesan 0
         self.constante = constante
         self.puestos = np.array(puestos)          # 10 valores; el del puesto 1 es 0
         self.info = info or {}
@@ -423,7 +438,7 @@ class Modelo:
         if not archivo.exists():
             return None
         j = json.loads(archivo.read_text(encoding="utf-8"))
-        if list(j["pesos"]) != NOMBRES:  # archivo de otra versión del código: mejor no usarlo que usarlo mal
+        if not set(j["pesos"]) <= set(NOMBRES):  # trae señales que este código no conoce: mejor no usarlo
             return None
         return cls(j["pesos"], j["constante"], j["puestos"], j.get("info"))
 
@@ -534,9 +549,12 @@ def _explorar(request_id: str, mundo: Mundo, modelo: Modelo, foto: dict, vistos:
     return salida
 
 
-def recomendar(peticion: dict, mundo: Mundo, modelo: Modelo, disponibles: set[str], explorar: bool = False) -> list[str]:
+def recomendar(peticion: dict, mundo: Mundo, modelo: Modelo, disponibles: set[str], explorar: bool = False,
+               forzar: dict[str, float] | None = None) -> list[str]:
     """10 product_id distintos, disponibles y nunca ya comprados por ese comprador, de mejor a peor.
-    Con explorar=True, en la mitad de las peticiones los huecos 9 y 10 son de exploración (ver `_explorar`)."""
+    Con explorar=True, en la mitad de las peticiones los huecos 9 y 10 son de exploración (ver `_explorar`).
+    `forzar` = {señal: multiplicador} sustituye el peso aprendido de esas señales en ESTA llamada, para probar en un
+    A/B una señal más fuerte o más floja de lo que dice el feedback sin reentrenar. Ejemplo: {"misma_sub": 3.0}."""
     u, vistos, nuevo = _leer_peticion(peticion)
     foto = mundo.foto(u)
     comprados = foto["comprados"]
@@ -546,8 +564,13 @@ def recomendar(peticion: dict, mundo: Mundo, modelo: Modelo, disponibles: set[st
 
     cand = candidatos(mundo, modelo, foto, vistos, vale)
     elegidos: list[str] = []
+    w = modelo.w
+    if forzar:
+        w = w.copy()
+        for nombre, multiplicador in forzar.items():
+            w[_I[nombre]] = math.log(multiplicador)
     if cand:
-        s = senales(mundo, foto, vistos, nuevo, cand) @ modelo.w
+        s = senales(mundo, foto, vistos, nuevo, cand) @ w
         elegidos = [cand[i] for i in np.argsort(-s, kind="stable")[:10]]
     if len(elegidos) < 10:  # casi nunca: se completa con los mejores de la tienda y, en último caso, con cualquiera
         ya = set(elegidos)
@@ -633,11 +656,17 @@ def _logloss(y: np.ndarray, z: np.ndarray) -> float:
     return _perdida(y, z) / len(y)
 
 
-def entrenar(datos: dict, peso_clic: float, parte_validacion: float = 0.3, hablar: bool = True) -> tuple[Modelo, dict]:
+def entrenar(datos: dict, peso_clic: float, parte_validacion: float = 0.3, hablar: bool = True,
+             sin: tuple[str, ...] = ()) -> tuple[Modelo, dict]:
     """Entrena y valida POR TIEMPO: se aprende con el principio del día y se comprueba con el final.
-    El modelo que se devuelve está entrenado con TODO (la validación solo dice cuánto fiarse)."""
+    El modelo que se devuelve está entrenado con TODO (la validación solo dice cuánto fiarse).
+    `sin` = señales que este entreno NO usa (para un A/B limpio: mismo momento, mismos datos, una señal menos)."""
     X, compra, clic = datos["X"], datos["compra"], datos["clic"]
     k = len(SENALES)
+    usadas = [n for n in NOMBRES if n not in sin]
+    if sin:  # columna a cero = la señal no existe para este modelo (su peso sale 0 y no se guarda)
+        X = X.copy()
+        X[:, [_I[n] for n in sin if n in _I]] = 0.0
     t_fila = np.repeat(datos["t"], 10)
     corte = float(np.quantile(datos["t"], 1 - parte_validacion))
     ent, val = t_fila < corte, t_fila >= corte
@@ -688,9 +717,8 @@ def entrenar(datos: dict, peso_clic: float, parte_validacion: float = 0.3, habla
     w = ajustar(X, objetivo)
     if peso_clic > 0:
         w[0] += math.log(compra.mean() / objetivo.mean())
-    modelo = Modelo({n: float(v) for n, v in zip(NOMBRES, w[1:k + 1])}, float(w[0]), [0.0] + [float(v) for v in w[k + 1:]],
-                    info)
-    modelo_val = Modelo({n: float(v) for n, v in zip(NOMBRES, w_val[1:k + 1])}, float(w_val[0]),
+    modelo = Modelo({n: float(w[1 + _I[n]]) for n in usadas}, float(w[0]), [0.0] + [float(v) for v in w[k + 1:]], info)
+    modelo_val = Modelo({n: float(w_val[1 + _I[n]]) for n in usadas}, float(w_val[0]),
                         [0.0] + [float(v) for v in w_val[k + 1:]], {"corte_ms": corte})
     if hablar:
         _contar(modelo, info)
@@ -702,7 +730,10 @@ def _contar(modelo: Modelo, info: dict) -> None:
           f"peso de un clic = {info['peso_clic']}")
     print("Cada señal: por cuánto multiplica la probabilidad relativa de compra (>1 sube, <1 baja)")
     for n, texto in SENALES:
-        print(f"  {n:<16} ×{math.exp(modelo.pesos[n]):7.2f}   {texto}")
+        if n in modelo.pesos:
+            print(f"  {n:<16} ×{math.exp(modelo.pesos[n]):7.2f}   {texto}")
+        else:
+            print(f"  {n:<16}  (no se usa en este entreno)")
     print("  puestos 2..10    " + " ".join(f"×{math.exp(v):.2f}" for v in modelo.puestos[1:]))
     print(f"\nVALIDACIÓN por tiempo (último 30 %: {info['respuestas_validacion']} respuestas, "
           f"{info['compras_validacion']} compras; modelo entrenado solo con lo anterior)")
@@ -839,6 +870,8 @@ def main() -> None:
     ap.add_argument("--ensayo", type=int, default=0, help="nº de peticiones reales para ensayar recomendar()")
     ap.add_argument("--nombre", default=None,
                     help="guardar en data/aprendiz_<nombre>.json en vez de data/aprendiz.json (no pisa el que está en vivo)")
+    ap.add_argument("--sin", default="",
+                    help="señales que este entreno NO usa, separadas por comas (p. ej. misma_sub para el control de un A/B)")
     ap.add_argument("--peso-clic", type=float, default=PESO_CLIC,
                     help="cuánto cuenta un clic sin compra como si fuera compra (0 = solo compras)")
     args = ap.parse_args()
@@ -859,7 +892,11 @@ def main() -> None:
     datos = matriz_entreno(catalogo, historial, eventos, peticiones, feedback)
     print(f"señales calculadas en {time.time() - t0:.0f} s ({len(datos['t'])} respuestas)")
 
-    modelo, extra = entrenar(datos, args.peso_clic)
+    sin = tuple(n for n in args.sin.split(",") if n)
+    desconocidas = [n for n in sin if n not in NOMBRES]
+    if desconocidas:
+        raise SystemExit(f"--sin: señales que no existen: {desconocidas}. Las que hay: {NOMBRES}")
+    modelo, extra = entrenar(datos, args.peso_clic, sin=sin)
     modelo.info["entrenado_utc"] = time.strftime("%Y-%m-%d %H:%M", time.gmtime())
     if args.ensayo:
         modelo.info["ensayo"] = ensayo(catalogo, historial, eventos, peticiones, feedback, extra["modelo_validacion"],

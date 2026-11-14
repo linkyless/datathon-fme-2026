@@ -1,14 +1,32 @@
 # Estado de Alex
 
 - **Rol:** Evaluación (docs/guias/evaluacion.md)
-- **Actualizado:** sáb 21:45
+- **Actualizado:** dom 00:20
 
 ## Haciendo ahora
+- **Listo para Lester, NO en vivo: AP7 = aprendiz + señal `misma_sub`** (misma subcategoría que lo último visto, en
+  productos que no son del comprador). Lo llamo AP7 porque AP4-AP6 ya son los brazos de orden de Lester. Números en
+  EXPERIMENTOS (dom 00:15). Resumen honesto:
+  - Por qué: en las compras ORGÁNICAS del historial, los más vendidos de la subcategoría de lo último visto aciertan
+    el 20,5 % (recall@10), frente al 9,2 % de la afinidad de categoría. El aprendiz ya los tenía de candidatos, pero
+    sin ninguna señal que los prefiriera (solo 0,50 por lista).
+  - En NUESTRO carrusel el efecto es mucho menor: ×1,39 al aprenderla del feedback. Con ese peso AP7 pone el mismo
+    1.º que su control en el 96,4 % de las peticiones: un A/B entre los dos no va a distinguir nada.
+  - Por eso hay un brazo fuerte sin reentrenar: `forzar={"misma_sub": 3.0}` (mismo 1.º 84,5 %, 2,21 productos de la
+    subcategoría por lista). El recall dice que gana (17,1 % frente a 12,7 %); el modelo en vivo, que pierde un poco
+    (2,09 → 2,04 compras/100 estimadas). Eso es justo lo que el A/B tiene que decidir. ×10 NO: saca carritos y
+    vistos de los primeros huecos (el modelo estima 2,09 → 1,69).
+- **Medida nueva: recall@10 sobre las compras orgánicas** (`python -m src.evaluar --recall`, en `src/evaluar.py`,
+  todavía sin subir). Sirve para descartar fuentes de candidatos antes de gastar tráfico; no predice la conversión.
+  Con ella: co-compra 14,6 % (descartada por ahora), vecinos por embedding 5,2-9,9 % (descartados: no baten al
+  catálogo), subcategoría de lo último visto 20,5 %.
 - **El aprendiz (`src/aprendiz.py`) gana a C en vivo** (A/B de Lester, desde 19:45 UTC): compras reales 2,03 %
   (77 de 3.792) frente a 0,83 % (11 de 1.328), diferencia +1,20 puntos, IC 95 % [+0,56, +1,87]. Leaderboard
   (19:16-20:16 UTC): AP2 1,81 frente a C 0,92; fríos 2,24 frente a 1,45; no fríos 1,54 frente a 0,57. El modelo
   había estimado 1,82 antes de entrar. Sin vistas (home) no hay diferencia medible (0,54 % frente a 0,40 %).
-- **Listo para Lester, NO en vivo todavía: AP3 (reentreno) + exploración.** Ver "Necesito de alguien".
+- **Hecho: AP3 está en vivo** (Lester). La exploración se probó de 21:43 a 23:16 y está APAGADA: en el leaderboard
+  cuesta 0,15-0,35 puntos en las peticiones que exploran (mi estimación con el modelo, 0,08, se quedó corta) y en
+  1.462 productos nuevos enseñados hubo 1 clic y 0 compras. Lo de abajo queda como registro:
   - AP3 = mismo modelo reentrenado con 99.728 respuestas (941 compras), incluido el feedback de AP2. Pesos casi
     iguales (cambian menos de un 10 %): mismo 1.º que AP2 en el 94,5 % de 3.000 peticiones reales, 9,67 de 10
     productos en común. Por eso un A/B AP2 frente a AP3 no enseñaría nada: propongo pasar a AP3 sin más.
@@ -137,19 +155,17 @@ Ponderar por 1/propensity (con tope, p. ej. 50), como hace la R5, y validar con 
   lo que enseñó. Por eso baseline_categoria saca 0.76 de hit_rate pero un SNIPS más bajo que baseline_starter.
 
 ## Necesito de alguien
-- **Lester (Operador)**: poner en vivo AP3 con exploración (tú decides cuándo y el reparto). En tu máquina:
-  1. `git pull` y `python -m src.aprendiz --nombre ap3` (~1,5 min; guarda `data/aprendiz_ap3.json` SIN pisar
-     `data/aprendiz.json`, que es el AP2 que está en vivo).
-  2. En `servicio.py`: cargar `aprendiz.Modelo.cargar("ap3")` y llamar a
-     `aprendiz.recomendar(peticion, MUNDO, modelo, disponibles, explorar=True)`. El Mundo es el mismo de ahora.
-     Hay que reiniciar: el modelo se lee una sola vez al arrancar. Nombre nuevo (`-AP3`) para que la fila salga limpia.
-  3. Opcional, recomendado: si `aprendiz.toca_explorar(peticion["request_id"])` es verdadero, etiquetar esa
-     respuesta con otro sufijo (p. ej. `-AP3x`). Así el coste de explorar se lee en el leaderboard (probabilidad
-     esperada, menos ruido) y no solo en nuestras compras reales.
-  4. Reparto que propongo: todo el tráfico del aprendiz a AP3 (AP2 y AP3 dan casi la misma lista, compararlos no
-     aporta) y C como control pequeño mientras sea práctica. La exploración se mide sola: la mitad que no explora
-     es el grupo de comparación, y `python -m src.aprendiz` imprime el informe al final.
-  Para la final: decidir si se explora o no (cuesta ~0,04 compras/100 en total según el modelo; no medido).
+- **Lester (Operador)**: cuando acabe la prueba a cuartos AP3/AP4/AP5/AP6, A/B de la señal de subcategoría. En tu
+  máquina, después de `git pull`:
+  1. `python -m src.aprendiz --nombre ap7` (~2 min) y `python -m src.aprendiz --sin-descarga --nombre ap7c --sin misma_sub`
+     (control: mismos datos y mismo momento, sin la señal). AP3 sigue cargando y dando las mismas listas con el
+     código nuevo (comprobado: 100 % idénticas en 4.000 peticiones reales), así que `recomendar_con_bono` y
+     `recomendar_por_niveles` no cambian.
+  2. Tres brazos: `-AP7C` = `Modelo.cargar("ap7c")` · `-AP7` = `Modelo.cargar("ap7")` · `-AP7S` =
+     `aprendiz.recomendar(peticion, MUNDO, modelo_ap7, disponibles, forzar={"misma_sub": 3.0})`.
+     Si solo caben dos, AP7C frente a AP7S: AP7 a secas es casi igual que el control.
+  3. Leerlo en la API con al menos 3 h por brazo. Si de tu prueba a cuartos sale un orden ganador (bono o niveles),
+     la señal se puede combinar después: afecta solo a los productos sin relación.
 - **Lester**: el modelo no se recarga sin reiniciar. Si reentrenamos cada cierto tiempo, convendría recargar
   `Modelo.cargar(...)` cuando cambie el archivo.
 - **Lester**: retiro lo de "volver a C / invertir el reparto": el filtro de comprados es correcto (ver corrección).

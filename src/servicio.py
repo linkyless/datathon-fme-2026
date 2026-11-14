@@ -20,6 +20,7 @@ la edad de cada petición se calcula EN EL SERVIDOR (columna edad_ms), nunca con
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import queue
 import subprocess
 import threading
@@ -54,11 +55,13 @@ HILOS_ENVIO = 3
 """Trabajadores de envío en paralelo (medido: un insert tarda 0,3-1 s)."""
 _CANDADO = threading.Lock()
 
-VARIANTES: list[tuple[str, dict]] = [("", {})]
+VARIANTES: list[tuple[str, dict]] = [("-A", {"_sin_covisitas": True}), ("-B", {})]
 """Reparto A/B (tarea O6). Cada comprador cae SIEMPRE en la misma variante: hash(user_id) % len(VARIANTES).
 Cada variante = (sufijo del nombre, params para ranking.recommend). Ejemplo para probar re-visitas:
     VARIANTES = [("-A", {}), ("-B", {"revisitas": True})]   ->  e-samen-v2-A y e-samen-v2-B en el leaderboard
-Con una sola variante ("", {}) todo el mundo recibe lo mismo y el nombre no lleva sufijo."""
+Con una sola variante ("", {}) todo el mundo recibe lo mismo y el nombre no lleva sufijo.
+Clave especial "_sin_covisitas": esa variante recomienda con las co-visitas vacías (la usa el servicio, no ranking).
+A/B actual (sáb 16:50): A = v1 sin co-visitas (≈ v0, control) · B = v1 completa. Única diferencia: las co-visitas."""
 
 
 def variante(peticion: dict) -> tuple[str, dict]:
@@ -158,6 +161,9 @@ def respuesta_segura(peticion: dict, estado: Estado, mv: str) -> tuple[dict, boo
     sufijo, params = variante(peticion)
     mv = mv + sufijo
     try:
+        if params.get("_sin_covisitas"):
+            estado = dataclasses.replace(estado, covisitas={})
+            params = {k: v for k, v in params.items() if k != "_sin_covisitas"}
         items = ranking.recommend(peticion, estado, params)
         if not errores_respuesta(items, disponibles):
             return {"request_id": peticion["request_id"], "items": items, "model_version": mv}, False

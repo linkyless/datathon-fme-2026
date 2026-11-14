@@ -43,7 +43,9 @@ def main() -> None:
         e = _estado_juguete(con_piezas)
         for p in peticiones:
             inicio = time.perf_counter()
-            items = ranking.recommend(p, e)
+            # El filtro de comprados se pasa EXPLÍCITO: en producción está apagado por defecto (medido:
+            # recomprar es lo normal), pero aquí se comprueba que sigue funcionando cuando se enciende.
+            items = ranking.recommend(p, e, {"filtrar_comprados": True})
             ms = (time.perf_counter() - inicio) * 1000
             errs = errores_respuesta(items, e.disponibles)
             assert not errs, f"{p['request_id']} (piezas={con_piezas}): {errs}"

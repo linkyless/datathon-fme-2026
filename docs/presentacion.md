@@ -106,6 +106,17 @@ Las herramientas de validación:
 
 **[PENDIENTE: resultados del evaluador offline por versión — Evaluación]**
 
+**Radiografía del leaderboard (sáb ~18:25, API oficial)**: 24/42 equipos, 0,82 % en la ventana; baseline
+real ≈ 0,59-0,60; líder (team_06, skore_money) **2,25 %**; referencia de los organizadores 2,09 %. Lo que
+se deduce de las técnicas de los demás (por nombres y saltos de versión):
+- **Quitar el filtro de comprados** es la palanca más validada: tres equipos lo han hecho explícito
+  ("nobought", "no-rebuy", sufijo "-n") y sus conversiones saltaron a 1,6-2,3 %.
+- Los de arriba son **co-visitas de sesión + ajuste fino medido en vivo** ("live-weights", "tendencia");
+  los de modelos pesados (BPR+XGBoost, LightGBM, logistic a secas) van por debajo de los simples medidos.
+- El líder convierte **3,36 % en el segmento frío** (2× su media global): el "frío" no está vacío, son
+  compradores con historial que RECOMPRAN. Nuestra respuesta: `frio_historial` (recompras + co-visitas de
+  lo que ya compró el comprador) y `filtrar_comprados = False`.
+
 ## 5. Lo que ya medimos del stream (hecho, con número)
 
 **La curva de atención por posición** (histórico del carrusel, 96.825 impresiones por posición en 3 días):

@@ -1,17 +1,13 @@
 # Estado de Lester
 
 - **Rol:** Operador (docs/guias/operador.md)
-- **Actualizado:** sáb 19:10
+- **Actualizado:** sáb 20:40
 
 ## Haciendo ahora
-- **EN VIVO desde 19:07: `e-samen-v1-A7` al 100 %** (`python -m src.servicio --v2`). Con vistas: árbol R6 (Leonardo).
-  Sin vistas: más vendidos de siempre sin lo ya comprado (lo de CF). Antes de relanzar en otra máquina:
-  `pip install -r requirements.txt`, `python -m src.eleccion` y `python -m src.arbol`.
-- A6 (18:51-19:07) enseñó que el árbol suma (+32 % no fríos, +43 % €) y que mi "categoría favorita" para fríos restaba
-  (−21 %): la había medido con FUGA de futuro. Corregido en EXPERIMENTOS.
-- Preparado, no en vivo: `src/vivo.py` (v4), logística aprendida del feedback en vivo SIN fuga. Siguiente candidato
-  para los fríos y para combinarlo con el árbol.
-- Red: hotspot, con cortes a ratos.
+- **EN VIVO desde 20:38: A/B `e-samen-v1-C` (1/4) frente a `e-samen-v1-AP` (3/4)** (`python -m src.servicio --ap`).
+  -AP = aprendiz de Alex (`src/aprendiz.py`). El servicio carga el Mundo en un hilo propio y lo pone al día cada 1,5 s;
+  hasta que existe `data/aprendiz.json` (`python -m src.aprendiz`) el brazo -AP responde como C.
+- A7 (árbol + CF fríos) queda fuera: fríos 1,25 frente a 1,93 de C (análisis de Alex/Fable).
 
 ## Plan del equipo para esta noche (acordado sáb 18:05) — objetivo: pasar del ~1,2 % a > 2 %
 Medido (3.530 compras del carrusel tras el 2026-11-07, comparadas con lo último visto):

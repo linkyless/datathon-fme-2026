@@ -28,7 +28,7 @@ import time
 import zlib
 from pathlib import Path
 
-from src import catalogo, coldstart, covisitas, eleccion, ranking, tendencias, usuarios
+from src import aprendiz, catalogo, coldstart, covisitas, eleccion, ranking, tendencias, usuarios
 from src.estado import Estado, por_categoria
 from src.rawtree import TEAM, insertar, query
 from src.validar import errores_respuesta
@@ -92,6 +92,51 @@ confirman que en vivo no hay recompras.
 A/B actual (sáb 17:30): C · CF · MF · MTF. "_filtrar_comprados" quita de los disponibles de ESE comprador lo que ya compró
 (sirve igual para las reglas y para el modelo, que si no lo pondría arriba).
 Desde sáb 17:36: CF 3/4 (arrancó 1,58 % vs C 1,00 %, 205 pet.) y C 1/4 de control. MF/MTF fuera hasta reentrenar R5."""
+
+
+VARIANTES_AP: list[tuple[str, dict]] = [
+    ("-C", _V0),                       # control (1/4): v0, populares de su categoría
+    ("-AP", {"_aprendiz": True}),      # 3/4: aprendiz de Alex (pesos aprendidos de NUESTRO feedback en vivo)
+    ("-AP", {"_aprendiz": True}),
+    ("-AP", {"_aprendiz": True}),
+]
+"""A/B sáb 20:50 (`--ap`): aprendiz (src/aprendiz.py) frente a C. Mientras el Mundo no está listo (~1 min al arrancar),
+el brazo -AP responde como C (y se nota en el log)."""
+
+MUNDO: "aprendiz.Mundo | None" = None
+MODELO_APRENDIZ: "aprendiz.Modelo | None" = None
+
+
+def preparar_aprendiz(estado: Estado, parar: threading.Event) -> None:
+    """Hilo propio: carga el Mundo (historial + eventos de hoy) y lo pone al día cada 1,5 s. Nunca toca el stock."""
+    global MUNDO, MODELO_APRENDIZ
+    while not parar.is_set() and MUNDO is None:
+        try:
+            t = time.monotonic()
+            modelo = aprendiz.Modelo.cargar()
+            if modelo is None:  # se activa solo en cuanto exista (python -m src.aprendiz lo crea)
+                log("aprendiz: aún no hay data/aprendiz.json; el brazo -AP responde como C (reintento en 30 s)")
+                parar.wait(30)
+                continue
+            mundo = aprendiz.Mundo.al_dia(estado.catalogo)
+            MODELO_APRENDIZ = modelo
+            MUNDO = mundo
+            log(f"aprendiz listo en {time.monotonic() - t:.1f} s ({len(mundo.comprados)} compradores con compras)")
+        except Exception as e:
+            log(f"aprendiz: no se pudo cargar el Mundo (reintento en 30 s): {e}")
+            parar.wait(30)
+    fallos = 0
+    while not parar.is_set():
+        try:
+            if MUNDO.catalogo is not estado.catalogo:
+                MUNDO.catalogo = estado.catalogo
+            MUNDO.ponerse_al_dia()
+            fallos = 0
+        except Exception as e:
+            fallos += 1
+            if fallos in (1, 10, 100):
+                log(f"aprendiz: ponerse_al_dia falló ({fallos} seguidos): {e}")
+        parar.wait(1.5)
 
 
 MODELO_ELECCION = eleccion.Modelo.cargar()
@@ -238,6 +283,13 @@ def respuesta_segura(peticion: dict, estado: Estado, mv: str) -> tuple[dict, boo
         if any(params.get(k) for k in vaciar):
             estado = dataclasses.replace(estado, **{campo: {} for k, campo in vaciar.items() if params.get(k)})
             params = {k: v for k, v in params.items() if k not in vaciar}
+        if params.get("_aprendiz"):
+            if MUNDO is not None and MODELO_APRENDIZ is not None:
+                items = aprendiz.recomendar(peticion, MUNDO, MODELO_APRENDIZ, disponibles)
+                if not errores_respuesta(items, disponibles):
+                    return {"request_id": peticion["request_id"], "items": items, "model_version": mv}, False
+            params = _V0  # aún sin Mundo (o respuesta rara): como C
+            estado = dataclasses.replace(estado, covisitas={}, comprados={})
         tiene_vistas = any(v.get("product_id") for v in (peticion.get("recent_views") or []))
         if params.get("_combo") and tiene_vistas:
             items = ranking.recommend(peticion, estado, {"usar_arbol": True, "filtrar_comprados": True})
@@ -299,11 +351,14 @@ def main() -> None:
     ap.add_argument("--sin-envio", action="store_true", help="hace todo menos insertar en submissions")
     ap.add_argument("--relevo", action="store_true", help="prepararse y esperar Enter antes de empezar")
     ap.add_argument("--v2", action="store_true", help="usar VARIANTES_V2 (A/B C / V2 / V3, 1/3 cada uno)")
+    ap.add_argument("--ap", action="store_true", help="usar VARIANTES_AP (C 1/4, aprendiz 3/4)")
     ap.add_argument("--duracion", type=float, default=0, help="segundos hasta pararse solo (0 = nunca)")
     args = ap.parse_args()
     global VARIANTES
     if args.v2:
         VARIANTES = VARIANTES_V2
+    if args.ap:
+        VARIANTES = VARIANTES_AP
 
     mv = version_modelo()
     log(f"arrancando {mv} | equipo {TEAM} | {'SIN ENVÍO (prueba)' if args.sin_envio else 'EN VIVO'} | variantes {[v for v, _ in VARIANTES]}")
@@ -311,6 +366,8 @@ def main() -> None:
     log(f"estado inicial listo: {len(estado.catalogo)} productos, {len(estado.disponibles)} disponibles")
     parar = threading.Event()
     threading.Thread(target=refrescar, args=(estado, parar), daemon=True, name="refresco").start()
+    if any(p.get("_aprendiz") for _, p in VARIANTES):
+        threading.Thread(target=preparar_aprendiz, args=(estado, parar), daemon=True, name="aprendiz").start()
 
     if args.relevo and not args.sin_envio:
         input(">>> LISTO. Para el baseline (Ctrl+C en su terminal) y pulsa Enter AQUÍ enseguida... ")

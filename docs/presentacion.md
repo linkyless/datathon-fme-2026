@@ -33,8 +33,10 @@ leaderboard público (`docs/competencia.md`):
 
 **Lectura (inferencia nuestra, la diremos como tal):** lo que premia el modelo oculto es la *afinidad fina con
 la sesión* (subcategoría, marca, rango de precio), no la categoría en bloque; y el precio frena menos de lo
-que parece. "Los equipos que generalizan ganan a los que memorizan": features por **atributos** (calculables
-para un producto nuevo), nunca por ID.
+que parece. Y de aquí sale nuestro principio rector — **"generalizar, no memorizar"**: en la final hay
+productos y compradores nuevos; por eso todo lo que entra a decidir se calcula por **atributos**
+(subcategoría, marca, precio, descripción/embedding), nunca por ID de producto: lo aprendido por ID se queda
+huérfano justo cuando más vale (es el principio detrás de DropoutNet, y lo que aplicamos en cold start).
 
 De ahí la escalera (cada peldaño se mide offline antes de subir; en práctica, versiones simples pueden ir
 en vivo con el ok del Operador para medir con compradores reales):
@@ -91,6 +93,17 @@ diapositiva + números frescos 30 min antes de presentar]**
 
 ## 5. Lo que ya medimos del stream (hecho, con número)
 
+**La curva de atención por posición** (histórico del carrusel, 96.825 impresiones por posición en 3 días):
+el clic cae de 1,08 % en la posición 1 a 0,16 % en la 10 — y la compra de 0,48 % a 0,04 %. Dos conclusiones
+directas: el orden importa 7×, y esta curva es la que Alex usa como corrección por posición (IPS).
+
+| pos | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| % clic | 1,08 | 0,58 | 0,42 | 0,32 | 0,28 | 0,25 | 0,23 | 0,21 | 0,18 | 0,16 |
+| % compra | 0,48 | 0,23 | 0,16 | 0,12 | 0,10 | 0,09 | 0,07 | 0,06 | 0,06 | 0,04 |
+
+Resto de números medidos:
+
 | Qué | Número | Fuente |
 |---|---|---|
 | Compradores nuevos (última hora) | 29,79 % | `shop.requests` |
@@ -98,9 +111,10 @@ diapositiva + números frescos 30 min antes de presentar]**
 | Catálogo / disponibles | 5.100 / 5.064 | `src/catalogo.py` |
 | Altas / agotados / reposiciones / cambios de precio | 100 / 144 / 108 / 1.241 | `shop.catalog_updates` |
 | Latencia del streaming de nuestro v0 (p50/p95) | 773 / 1.091 ms (baseline: 1.238 / 2.232) | `team_29.feedback` |
-| Vecinos por embedding en la misma categoría | 98,4 % (77,3 % misma subcategoría) | `src/embeddings.py` + `shop.catalog` |
+| Vecinos por embedding en la misma subcategoría | 100 % de la lista por diseño (77 % en la versión global anterior) | `src/coldstart.py` |
+| Co-visitas heredadas por los productos nuevos | construidas (D6); pendiente de medición con co-visitas reales | `src/coldstart.py` |
 
-(Completa de resultados de conversión A/B en la final: sección "Resultados" **[PENDIENTE]**.)
+(Completar con los resultados de conversión A/B en la final: sección "Resultados" **[PENDIENTE]**.)
 
 ## 6. Uso de RawTree (por qué esta pieza decide el reto)
 
@@ -118,6 +132,16 @@ diapositiva + números frescos 30 min antes de presentar]**
 
 ## 7. Qué haríamos con más tiempo (honesto, priorizado)
 
+**Y lo que NO hicimos a propósito** (la diapositiva honesta — el jurado lo agradece y es 30 % de la nota):
+- **Nada de redes neuronales** (GRU4Rec/SASRec): la comparativa de Ludewig/Jannach (2020) muestra que en
+  sesiones los métodos por vecinos compiten con las redes, que además cuestan 8+ horas que no teníamos.
+- **Nada de bandit por producto**: en la final hay ~21.600 peticiones y ~430 compras — no hay señal para
+  aprender 5.000 brazos; por eso solo aprenderíamos *parámetros compartidos* (Thompson descontado).
+- **No empezáramos por el modelo grande**: los equipos que fueron directos a gradient boosting fallaron por
+  memorizar el sesgo del log y por latencia (61 % a tiempo) — es la ilustración exacta de "memorizar no
+  generaliza". Nuestro ranker (si llega) reutiliza candidatos, curva de posición y features, nada se tira.
+
+Con más tiempo, en orden de valor:
 1. **Reordenar con LightGBM** sobre los mismos candidatos y features (features por atributos: subcategoría,
    marca, cubo de precio, similitud del embedding con la sesión, tendencia). Los ganadores de OTTO/RecSys
    hacen exactamente esto en dos etapas — pero solo cuando los peldaños simples están medidos.

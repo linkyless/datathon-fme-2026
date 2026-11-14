@@ -1,7 +1,7 @@
 # Estado de Artai
 
 - **Rol:** Datos y relato (docs/guias/datos.md)
-- **Actualizado:** sáb ~14:50
+- **Actualizado:** sáb ~16:10
 
 ## Haciendo ahora
 - Presentación + panel Tukey listos; pidiendo números a Evaluación y resultados en vivo para rellenar los **[PENDIENTE]** de docs/presentacion.md.
@@ -9,6 +9,13 @@
 - **Vecinos no hace falta apagarlos**: `ranking.py` ya solo los usa para productos SIN co-visitas (paso 2). El desastre 0,76→0,05 era por co-visitas vacío, no por los vecinos. Con co-visitas de Leonardo, quedan automáticamente limitados a lo nuevo/lo raro. Confirmárselo a Leonardo.
 
 ## Terminado
+- **D6 co-visitas heredadas** (fase 2, commit de hoy): `cargar_covisitas_heredadas(hasta, covisitas)` en `src/coldstart.py`.
+  - Producto sin co-visitas → media ponderada por similitud de las de sus 20 vecinos, recortada a 20 pares. Misma forma que `covisitas` (dict pid -> [(otro, peso)]).
+  - Vecinos ahora DENTRO de la subcategoría del producto (completan con la categoría si faltan), como pide la D4 actualizada. Matemática probada con datos de juguete + humo real (5100 productos, 8,6 s vecinos; herencia depende de cuántos vecinos tengan co-visitas).
+  - **Lester (Operador), decidir**: campo nuevo `covisitas_heredadas` en el Estado (y que `ranking` lo use como segunda fuente para pids sin co-visitas) O mezclar yo el dict dentro de `covisitas` en `construir`. Lo primero es más fácil de medir por separado (mi preferencia).
+  - **Nota de rendimiento**: `construir()` añadirá ~10-13 s (decodificar vectores una vez, cache interno 2 min + atributos 10 min). El refresco del servicio puede seguir cada 60 s.
+- **D7 historia para el jurado**: `docs/presentacion.md` (commit de hoy): curva de posición medida (tabla 10 slots), principio "generalizar no memorizar" (DropoutNet explicado), y nueva diapositiva honesta "lo que NO hicimos y por qué" (redes, bandit por producto, GBM directo) con la evidencia de investigación.md.
+- **Divergencia consciente en D3**: la guía actualizada pide peso ×5 a las compras de las últimas 2 h y completar parejas con <20 compras. Yo mantengo la mezcla "20 globales delante" porque la medición de Alex mostró que el contexto-puro empeora a los fríos. Propongo: dejar la mezcla como base y probar el "peso reciente" como variante A/B (parámetro) cuando se re-mida. Quien decida: Evaluación.
 - **D1 embeddings**: `src/embeddings.py` (`python -m src.embeddings`), commit `5159f0b`.
   - 5.000/5.000 vectores (qwen3-embedding, 4096 dims, normalizados) en `data/embeddings.npy` + `data/embeddings_ids.json`.
   - Verificado: 5.000 filas `emb_v1` en `team_29.scratch`, product_ids distintos = 5.000 (sin duplicados; lo ya subido no se reenvía).

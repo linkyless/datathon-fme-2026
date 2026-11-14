@@ -54,17 +54,31 @@ def cargar_populares_contexto(hasta: str | None = None) -> dict[tuple[str, str],
     return salida
 
 
-def cargar_vecinos(hasta: str | None = None) -> dict[str, list[str]]:
-    """product_id -> los 20 productos con descripción más parecida (por embeddings), del más al menos parecido.
+_ATRIBUTOS_CACHE: tuple[float, dict[str, tuple[str, str]]] | None = None
+_VECTORES_CACHE: tuple[float, list[str], np.ndarray] | None = None
 
-    Lee los embeddings de team_NN.scratch (los calcula src/embeddings.py), los renormaliza
-    y devuelve los 20 vecinos con mayor producto escalar (descartando el propio producto).
-    `hasta` ('YYYY-MM-DD'): solo considera productos con created_at < hasta (los embeddings
-    de scratch son de hoy, pero así la evaluación offline no ve productos futuros).
+
+def _atributos() -> dict[str, tuple[str, str]]:
+    """product_id -> (category, subcategory) del catálogo, con cache de 10 min."""
+    global _ATRIBUTOS_CACHE
+    if _ATRIBUTOS_CACHE and time.time() - _ATRIBUTOS_CACHE[0] < 600:
+        return _ATRIBUTOS_CACHE[1]
+    filas = query("SELECT product_id::String pid, category::String c, subcategory::String s FROM shop.catalog")
+    atributos = {f["pid"]: (f["c"], f["s"]) for f in filas}
+    _ATRIBUTOS_CACHE = (time.time(), atributos)
+    return atributos
+
+
+def _vectores(hasta: str | None, cache_s: int = 120) -> tuple[list[str], np.ndarray]:
+    """Vectores normalizados de scratch (ids en el orden de las filas de la matriz).
+
+    La usan cargar_vecinos y cargar_covisitas_heredadas: dentro de un mismo refresco
+    del Estado se decodifican una sola vez (cache corto). `hasta` corta por created_at.
     """
+    global _VECTORES_CACHE
+    if _VECTORES_CACHE and time.time() - _VECTORES_CACHE[0] < cache_s:
+        return _VECTORES_CACHE[1], _VECTORES_CACHE[2]
     filas = query("SELECT product_id::String pid, vec FROM team_29.scratch WHERE tipo = 'emb_v1'")
-    if not filas:
-        return {}
     decodificados = {
         f["pid"]: np.frombuffer(base64.b64decode(f["vec"]), dtype=np.float16).astype(np.float32)
         for f in filas
@@ -77,20 +91,131 @@ def cargar_vecinos(hasta: str | None = None) -> dict[str, list[str]]:
         }
         decodificados = {pid: v for pid, v in decodificados.items() if pid in creados}
     ids = list(decodificados)
-    matriz = np.vstack([decodificados[p] for p in ids])
+    matriz = np.vstack([decodificados[p] for p in ids]) if ids else np.zeros((0, 1), dtype=np.float32)
     normas = np.linalg.norm(matriz, axis=1, keepdims=True)
     normas[normas == 0] = 1.0
     matriz = matriz / normas
-    # Similitud = producto escalar (vectores de longitud 1). 5000x5000 en un golpe.
-    sim = matriz @ matriz.T
-    k = min(VECINOS + 1, len(ids))
-    vecinos: dict[str, list[str]] = {}
-    for i, pid in enumerate(ids):
-        candidatos = np.argpartition(-sim[i], k - 1)[:k]
-        candidatos = candidatos[candidatos != i]
-        orden = candidatos[np.argsort(-sim[i][candidatos])][:VECINOS]
-        vecinos[pid] = [ids[j] for j in orden]
-    return vecinos
+    _VECTORES_CACHE = (time.time(), ids, matriz)
+    return ids, matriz
+
+
+def _vecinos_detallados(
+    hasta: str | None = None,
+    ids: list[str] | None = None,
+    matriz: np.ndarray | None = None,
+) -> dict[str, list[tuple[str, float]]]:
+    """product_id -> [(vecino, similitud), ...]: los 20 mejores DENTRO de su subcategoría.
+
+    Si en su subcategoría hay menos de 20, completa con los de su categoría (lo que pide
+    la D4). Similitud = producto escalar (los vectores están normalizados).
+    """
+    if ids is None or matriz is None:
+        ids, matriz = _vectores(hasta)
+    n = len(ids)
+    if not n:
+        return {}
+    atributos = _atributos()
+    sub_de = [atributos.get(p, ("", ""))[1] for p in ids]
+    cat_de = [atributos.get(p, ("", ""))[0] for p in ids]
+
+    salida: dict[str, list[tuple[str, float]]] = {}
+    incompletos: list[int] = []
+
+    # Paso 1: los mejores dentro de la propia subcategoría.
+    por_sub: dict[str, list[int]] = {}
+    for i in range(n):
+        por_sub.setdefault(sub_de[i], []).append(i)
+    for grupo in por_sub.values():
+        bloque = matriz[grupo] @ matriz[grupo].T
+        for fila, i_global in enumerate(grupo):
+            pares: list[tuple[int, float]] = []
+            for j in np.argsort(-bloque[fila]):
+                j = int(j)
+                if j == fila:  # descartarse a sí mismo
+                    continue
+                pares.append((grupo[j], float(bloque[fila, j])))
+                if len(pares) == VECINOS:
+                    break
+            salida[ids[i_global]] = [(ids[a], s) for a, s in pares]
+            if len(pares) < VECINOS:
+                incompletos.append(i_global)
+
+    # Paso 2: quien no llegó a 20 vecinos, completar con la misma categoría.
+    if incompletos:
+        por_cat: dict[str, list[int]] = {}
+        for i in range(n):
+            por_cat.setdefault(cat_de[i], []).append(i)
+        bloques: dict[int, np.ndarray] = {}  # por índice de categoría (tupla cat_de) no hace falta: por grupo
+        for i in incompletos:
+            ya = salida[ids[i]]
+            if len(ya) >= VECINOS:
+                continue
+            grupo = por_cat[cat_de[i]]
+            if len(grupo) - 1 <= len(ya):  # ni con toda la categoría llega a 20
+                continue
+            clave = cat_de[i]
+            if clave not in bloques:
+                bloques[clave] = matriz[grupo] @ matriz[grupo].T
+            bloque = bloques[clave]
+            fila = grupo.index(i)
+            puestos = {a for a, _ in ya} | {ids[i]}
+            pares: list[tuple[str, float]] = []
+            for j in np.argsort(-bloque[fila]):
+                j = int(j)
+                candidato = ids[grupo[j]]
+                if candidato in puestos:
+                    continue
+                pares.append((candidato, float(bloque[fila, j])))
+                if len(ya) + len(pares) == VECINOS:
+                    break
+            salida[ids[i]] = ya + pares
+    return salida
+
+
+def cargar_vecinos(hasta: str | None = None) -> dict[str, list[str]]:
+    """product_id -> los 20 productos con descripción más parecida (por embeddings), del más al menos parecido.
+
+    Vecinos DENTRO de la subcategoría del producto (si faltan, de la categoría); los calcula
+    `_vecinos_detallados` desde team_NN.scratch. `hasta` ('YYYY-MM-DD') corta por created_at
+    para que la evaluación offline no vea productos futuros.
+    """
+    return {pid: [v for v, _ in pares] for pid, pares in _vecinos_detallados(hasta).items()}
+
+
+def cargar_covisitas_heredadas(
+    hasta: str | None = None,
+    covisitas: dict[str, list[tuple[str, float]]] | None = None,
+    vecinos_det: dict[str, list[tuple[str, float]]] | None = None,
+) -> dict[str, list[tuple[str, float]]]:
+    """Co-visitas "prestadas" para productos que aún no tienen (D6, informe punto 8 / ficha T7).
+
+    Para cada producto SIN fila en `covisitas`: la media ponderada por similitud de las
+    co-visitas de sus vecinos (los de `cargar_vecinos`), recortada a 20 pares ordenados.
+    Devuelve un dict con la MISMA forma que `covisitas` (product_id -> [(otro, peso), ...]),
+    listo para mezclarse (decisión con el Operador: campo nuevo `covisitas_heredadas` en el
+    Estado, o mezclarlas dentro de `covisitas`; ranking puede leerlas igual).
+    """
+    cov = covisitas or {}
+    if not cov:
+        return {}
+    det = vecinos_det if vecinos_det is not None else _vecinos_detallados(hasta)
+    heredadas: dict[str, list[tuple[str, float]]] = {}
+    for pid, pares in det.items():
+        if pid in cov:
+            continue  # ya tiene co-visitas reales: no se toca
+        filas = [(v, s) for v, s in pares if v in cov]  # solo vecinos con co-visitas conocidas
+        if not filas:
+            continue
+        total = sum(s for _, s in filas)
+        if total <= 0:
+            continue
+        puntos: dict[str, float] = {}
+        for v, s in filas:
+            for otro, peso in cov[v]:
+                puntos[otro] = puntos.get(otro, 0.0) + s * float(peso)
+        orden = sorted(((o, w / total) for o, w in puntos.items()), key=lambda t: -t[1])[:VECINOS]
+        heredadas[pid] = [(o, round(w, 4)) for o, w in orden if w > 0]
+    return heredadas
 
 
 def embeber_nuevos() -> int:

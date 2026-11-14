@@ -1,18 +1,23 @@
 # Estado de Lester
 
 - **Rol:** Operador (docs/guias/operador.md)
-- **Actualizado:** sáb 13:00
+- **Actualizado:** sáb 13:25
 
 ## Haciendo ahora
-- Tarea O1 de docs/guias/operador.md (probar src/catalogo.py).
+- Tarea O2 de docs/guias/operador.md (src/servicio.py en modo sin envío).
 
 ## Terminado
+- O1: `src/catalogo.py` probado contra RawTree. 5.100 productos, 5.064 disponibles, 36 agotados/inactivos. Los 10 populares disponibles coinciden EXACTAMENTE con lo que envía el baseline en vivo. `construir()` tarda ~3,4 s. `v0-categoria` sobre 200 peticiones reales: 0,8 ms/petición, 0 inválidas, 158 de 200 distintas del baseline.
 - Clave de RawTree recogida (team_29) y probada.
 - Baseline oficial EN VIVO desde las 12:27 en su carpeta aparte. No pararlo.
 - Repo subido a GitHub  e invitaciones enviadas.
 - Reparto en docs/guias/ y esqueleto de src/ (contrato en src/estado.py).
 
 ## Descubierto (cosas que los demás deben saber)
+- En `IN (SELECT ...)` hay que castear las dos partes: `request_id::String IN (SELECT request_id::String ...)`. Sin cast: "Illegal type Dynamic".
+- De las últimas 200 peticiones en vivo: 68 con is_new_user = true (34 %) y 42 sin recent_views (21 %). El cold start pesa mucho.
+- `recent_views` va de más antiguo a más reciente (lo último visto es el último elemento). Los `ts` están en UTC.
+- `context` llega como objeto: `{"device": "web", "page": "product", "region": "Catalunya"}`.
 - En Windows, `python` puede abrir el Python de MSYS2 (sin pip): usar `py -m venv .venv` y luego `python -m pip`.
 - En PowerShell las llamadas con JSON fallan por las comillas: usar un archivo `body.json` con `curl.exe --data-binary "@body.json"`.
 - Todo el contexto de lo hecho hasta ahora está en `docs/CONTEXTO.md`.

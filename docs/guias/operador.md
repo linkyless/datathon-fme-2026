@@ -44,7 +44,7 @@ Pega esto a tu agente (usa plan mode, Shift+Tab):
 > 4. Antes de enviar, valida cada respuesta con `src.validar.errores_respuesta(items, estado.disponibles)`. Si es
 >    inválida o recommend() lanza un error, envía en su lugar los 10 populares disponibles. Nunca se cae.
 > 5. Al arrancar, mete en `seen` los request_id ya enviados: los de team_29.submissions cuyo request_id esté en
->    shop.requests de los últimos 10 minutos. Así reiniciar no duplica.
+>    shop.requests de los últimos 10 minutos (ojo: `request_id::String IN (SELECT request_id::String ...)`, sin cast falla). Así reiniciar no duplica.
 > 6. `model_version` = `ranking.NOMBRE + "-" + hash corto del commit`.
 > 7. Opción `--sin-envio`: hace todo menos el push; imprime cuántas respuestas enviaría y la latencia.
 > 8. Cada 10 s imprime una línea: respondidas, inválidas sustituidas y latencia p95 en ms.

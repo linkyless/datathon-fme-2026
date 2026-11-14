@@ -1,7 +1,7 @@
 # Estado de Lester
 
 - **Rol:** Operador (docs/guias/operador.md)
-- **Actualizado:** sáb 23:55
+- **Actualizado:** sáb 23:10
 
 ## Haciendo ahora
 - **EN VIVO desde 21:43: A/B `e-samen-v1-AP3` (1/2) frente a `e-samen-v1-EXP1`/`-EXP1x` (1/2)** (`python -m src.servicio --ap3`).
@@ -49,7 +49,7 @@ Reparto (nada va en vivo sin la medición de Alex):
 - O3 (14:08) relevo del baseline sin duplicados. O2 servicio. O1 catálogo.
 
 ## Descubierto (cosas que los demás deben saber)
-- **Investigación de las 23:50 (fila en EXPERIMENTOS): ~40 hipótesis más sobre AP3, casi todas sin efecto.** Lo que queda:
+- **Investigación de las 23:00 (fila en EXPERIMENTOS): ~40 hipótesis más sobre AP3, casi todas sin efecto.** Lo que queda:
   - El servicio en vivo responde lo mismo que el modelo en limpio (92,5 % mismo 1.º): el problema no es de retraso.
   - **AP3 llena 6,56 de sus 10 huecos con productos sin relación con el comprador** y solo enseña el 28 % de sus
     carritos de hoy abiertos y 0,33 productos vistos en la sesión. Los que deja fuera (categorías que el comprador

@@ -1,13 +1,16 @@
 # Estado de Lester
 
 - **Rol:** Operador (docs/guias/operador.md)
-- **Actualizado:** sáb 21:45
+- **Actualizado:** sáb 22:40
 
 ## Haciendo ahora
 - **EN VIVO desde 21:43: A/B `e-samen-v1-AP3` (1/2) frente a `e-samen-v1-EXP1`/`-EXP1x` (1/2)** (`python -m src.servicio --ap3`).
   AP3 = aprendiz de Alex reentrenado (`python -m src.aprendiz --nombre ap3` → `data/aprendiz_ap3.json`).
   EXP1 = AP3 con exploración; la mitad que explora sale como -EXP1x. Coste de explorar: EXP1x frente a AP3.
 - Antes, AP2 frente a C (20:47-21:43): AP2 gana (Alex: compras reales 2,03 % frente a 0,83 %, IC [+0,56, +1,87]).
+- Lectura del A/B a las 22:30 (API, 21:29-22:29): AP3 1,75 · EXP1 1,84 · **EXP1x 1,49**. Explorar cuesta ~0,3 puntos
+  en las peticiones que exploran (el modelo estimaba 0,08). Como explora 1 de cada 4 peticiones nuestras, el equipo
+  pierde ~0,07. Para la final: bajar `EXPLORAR_FRACCION` o no explorar (decide Alex con el informe de exploración).
 - Pendiente: decidir lo de la nube (Railway, rama `produccion`).
 
 ## Plan del equipo para esta noche (acordado sáb 18:05) — objetivo: pasar del ~1,2 % a > 2 %
@@ -46,6 +49,16 @@ Reparto (nada va en vivo sin la medición de Alex):
 - O3 (14:08) relevo del baseline sin duplicados. O2 servicio. O1 catálogo.
 
 ## Descubierto (cosas que los demás deben saber)
+- **¿Queda información en el historial que AP3 no use? Poca** (sáb 22:35, fila en EXPERIMENTOS; 22 señales probadas
+  sobre las 101.795 respuestas del día, validación por tiempo):
+  - Lo único nuevo: **cuántas veces el carrusel antiguo ya le enseñó ese producto a ese comprador**
+    (`shop.history_sessions`, `arrayJoin(shown)`). Con 10 o más veces y sin compra, se compra la mitad de lo que AP3
+    espera (real / predicho 0,68 frente a 1,3-1,9 con menos). Mejora el error un 0,91 % [+0,38, +1,39].
+  - Afinidad por COMPRAS (parte de sus compras del historial en esa categoría): +0,32 % [+0,12, +0,55]. Sale gratis de
+    `historial["compras"]`, que el aprendiz ya tiene en memoria.
+  - No aportan nada encima de AP3: tasa del carrusel antiguo (`tasa_ips`, lo que más pesaba en el árbol), co-visitas
+    (con su historial, la sesión o el carrito de hoy), precio relativo, marca, antigüedad del carrito, clic antiguo.
+  - Ojo: todo esto solo vale para compradores con historial. En la final llegan compradores nuevos.
 - **Los organizadores dicen que en vivo NO hay recompras.** En el historial sí: de 3.530 compras del carrusel
   posteriores al 2026-11-07, 2.179 (62 %) eran productos que ese usuario ya había comprado antes. Por eso:
   - el offline que premia recompras (purchase_hit con lo ya comprado) mide algo que en vivo no existe;
@@ -62,6 +75,11 @@ Reparto (nada va en vivo sin la medición de Alex):
 - Cada viaje a RawTree cuesta ~300 ms. Reloj del portátil ~8 s detrás del servidor: edades en SQL.
 
 ## Necesito de alguien
+- **Alex (Evaluación):** dos señales candidatas para `aprendiz.senales` (medidas offline, fila sáb 22:35), si las
+  quieres en AP4: (1) `ensenado_antes` = log(1 + veces que el carrusel antiguo le enseñó ese producto); hay que bajar
+  los pares (comprador, producto) con 5 o más veces a `historial.pkl`; (2) afinidad por compras, con lo que ya hay en
+  `historial["compras"]`. Juntas con otras 4 menores: +1,66 % [+0,82, +2,51] de error; el acierto del 1.º no se mueve.
+  Y la exploración al 50 % cuesta más de lo estimado (arriba).
 - **Alex (Evaluación):** confirmar CF > C con tu panel (`python -m src.panel --horas 1`). Y quitar del test offline
   las compras de productos ya comprados (no existen en vivo).
 - **Leonardo (Ranking):** reentrenar R5 sin la señal `ya_comprado` y sin las filas de recompras; mirar el peso del

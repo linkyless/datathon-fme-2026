@@ -210,7 +210,18 @@ def respuesta_segura(peticion: dict, estado: Estado, mv: str) -> tuple[dict, boo
             return {"request_id": peticion["request_id"], "items": items, "model_version": mv}, False
     except Exception as e:
         log(f"recommend falló en {peticion.get('request_id')}: {e}")
+    # Fallback: populares disponibles. Si son menos de 10, se completa con cualquiera
+    # disponible (enviar <10 es inválida; los populares disponibles pueden quedar por
+    # debajo de 10 si hay muchos agotados). Se valida antes de salir, por si acaso.
     items = [p for p in estado.populares if p in disponibles][:10]
+    if len(items) < 10:
+        for p in sorted(disponibles):
+            if len(items) == 10:
+                break
+            if p not in items:
+                items.append(p)
+    if errores_respuesta(items, disponibles):
+        log(f"fallback inválido en {peticion.get('request_id')}: disponibles={len(disponibles)}")
     return {"request_id": peticion["request_id"], "items": items, "model_version": mv}, True
 
 
@@ -221,15 +232,21 @@ def enviar(cola: queue.Queue, sin_envio: bool, stats: dict) -> None:
         if lote is None:
             return
         t = time.perf_counter()
+        enviado = False
         for intento in (1, 2):
             try:
                 if not sin_envio:
                     insertar("submissions", lote, timeout=3)
+                enviado = True
                 with _CANDADO:  # varios hilos suman a la vez: sin candado se perderían cuentas
                     stats["enviadas"] += len(lote)
                 break
             except Exception as e:
                 log(f"envío falló (intento {intento}): {e}")
+        if not enviado:  # dos intentos fallidos: esas peticiones quedan como "missing" en el feedback
+            with _CANDADO:
+                stats["perdidas"] += len(lote)
+            log(f"lote perdido tras 2 intentos: {len(lote)} peticiones")
         with _CANDADO:
             stats["ms_envio"].append((time.perf_counter() - t) * 1000)
 
@@ -262,7 +279,7 @@ def main() -> None:
             time.sleep(1)
     log(f"{len(vistas)} peticiones de los últimos 10 min ya estaban respondidas: no se repiten")
 
-    stats = {"enviadas": 0, "sustituidas": 0, "ms_envio": [], "edad_ms": [], "fallos_sondeo": 0}
+    stats = {"enviadas": 0, "sustituidas": 0, "perdidas": 0, "ms_envio": [], "edad_ms": [], "fallos_sondeo": 0}
     cola: queue.Queue = queue.Queue()
     # Varios trabajadores de envío: un insert tarda hasta ~1 s y, con uno solo, el lote siguiente esperaba en cola.
     hilos_envio = [threading.Thread(target=enviar, args=(cola, args.sin_envio, stats), daemon=True, name=f"envio{i}")
@@ -309,7 +326,8 @@ def main() -> None:
             cola.put(None)
         for h in hilos_envio:
             h.join(timeout=5)
-        log(f"parado. Respondidas en total: {stats['enviadas']}, sustituidas: {stats['sustituidas']}")
+        log(f"parado. Respondidas en total: {stats['enviadas']}, sustituidas: {stats['sustituidas']}, "
+            f"perdidas por envío fallido: {stats['perdidas']}")
 
 
 if __name__ == "__main__":

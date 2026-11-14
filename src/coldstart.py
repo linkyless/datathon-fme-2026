@@ -28,6 +28,9 @@ def cargar_populares_contexto(hasta: str | None = None) -> dict[tuple[str, str],
     `hasta` ('YYYY-MM-DD'): usar solo datos con ts < hasta. None = todo (en vivo).
     """
     filtro = f" AND ts::DateTime64(3) < '{hasta}'" if hasta else ""
+    # NOTA de coherencia con covisitas.py: aquí cada EVENTO de compra cuenta (una sesión que compra
+    # dos veces suma 2); covisitas cuenta CADA SESIÓN UNA VEZ (el mayor peso). Son señales distintas
+    # a propósito: "cuántas compras de ese tipo de comprador" vs "en cuántas sesiones se relacionan".
     filas = query(
         "SELECT device::String d, region::String r, product_id::String pid, count() c "
         "FROM shop.history_events "

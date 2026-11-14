@@ -27,15 +27,19 @@ VERSION_DESDE = "2026-11-14 13:08:00"
 # Cada panel: pregunta -> indicador -> decisión. El gráfico concreto se elige por la forma de los datos
 # (líneas para series temporales, barras para categorías: criterio 2 de Tukey, adecuación).
 PANELS_SQL: dict[str, str] = {
-    # 1) ¿Convertimos mejor que el baseline? (por hora, últimos 6 h)
+    # 1) ¿Convertimos mejor? POR VERSIÓN (los brazos del A/B se ven por separado; unión con submissions)
     "conversion_hora": """
-        SELECT toStartOfHour(ts::DateTime64(3)) h, count() n,
-               round(100*countIf(clicked::String != '')/count(), 2) pct_clic,
-               round(100*countIf(purchased::String != '')/count(), 2) pct_compra,
-               round(avg(latency_ms::Float64), 0) lat_media
-        FROM team_29.feedback
-        WHERE ts > now() - INTERVAL 6 HOUR AND request_id::String != '__init__'
-        GROUP BY h ORDER BY h
+        SELECT toStartOfHour(f.ts::DateTime64(3)) AS h,
+               if(s.mv = '', '(sin respuesta)', s.mv) AS version, count() AS n,
+               round(100*countIf(f.clicked::String != '')/count(), 2) AS pct_clic,
+               round(100*countIf(f.purchased::String != '')/count(), 2) AS pct_compra
+        FROM (SELECT request_id::String AS rid, ts::DateTime64(3) AS ts,
+                     clicked::String AS clicked, purchased::String AS purchased
+              FROM team_29.feedback
+              WHERE ts > now() - INTERVAL 6 HOUR AND request_id::String != '__init__') f
+        LEFT JOIN (SELECT request_id::String AS rid, any(model_version::String) AS mv
+                   FROM team_29.submissions GROUP BY rid) s ON f.rid = s.rid
+        GROUP BY h, version ORDER BY h, version
     """,
     # 2) ¿Perdemos peticiones? ¿por qué? (últimos 60 min por trozos de 10)
     "fallback_motivo": """
@@ -153,7 +157,8 @@ svg text{fill:#94a3b8;font-size:10px}
 
 _JS = """
 const COL = {nuestro:'#2563eb', otros:'#64748b', clic:'#22d3ee', compra:'#34d399', rojo:'#f87171',
-             ambar:'#fbbf24', eje:'#475569', texto:'#94a3b8', marca:'#f97316'};
+             ambar:'#fbbf24', eje:'#475569', texto:'#94a3b8', marca:'#f97316',
+             p1:'#3b82f6', p2:'#34d399', p3:'#fbbf24', p4:'#c084fc'};
 function esc(s){return String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
 function svgOpen(w){return '<svg viewBox="0 0 '+w+' 210" preserveAspectRatio="xMidYMid meet">'}
 
@@ -177,9 +182,14 @@ def lineChart(rows, series, opts){
     if (i > 0) out += `<line x1='${X(i)}' y1='${T}' x2='${X(i)}' y2='${H-B}' stroke='${COL.marca}' stroke-dasharray='4 3'/>`
       + `<text x='${X(i)}' y='${T+9}' fill='${COL.marca}'>nuestra v</text>`; }
   for (const s of series){
-    out += `<polyline fill='none' stroke='${COL[s.color || 'nuestro']}' stroke-width='1.8' points='${
-      rows.map((r, i) => X(i).toFixed(1)+','+Y(+r[s.y]).toFixed(1)).join(' ')}'/>`;
-    rows.forEach((r,i)=>{ out += `<circle cx='${X(i)}' cy='${Y(+r[s.y])}' r='2.2' fill='${COL[s.color||'nuestro']}'/>` });
+    const pts = [], circ = [];
+    rows.forEach((r, i) => { const y = r[s.y];
+      if (y === null || y === undefined) return;
+      pts.push(X(i).toFixed(1) + ',' + Y(+y).toFixed(1));
+      circ.push(`<circle cx='${X(i)}' cy='${Y(+y)}' r='2.2' fill='${COL[s.color || 'nuestro']}'/>`); });
+    if (pts.length > 1)
+      out += `<polyline fill='none' stroke='${COL[s.color || 'nuestro']}' stroke-width='1.8' points='${pts.join(' ')}'/>`;
+    out += circ.join('');
   }
   return out + '</svg>';
 }
@@ -235,30 +245,39 @@ def _regenerar() -> None:
     fiab = datos["fiabilidad"]
     fb = datos["fallback_motivo"]
 
-    # KPI: conversión desde nuestra versión vs antes (mismo número que usa Evaluación)
-    antes = [r for r in conv if str(r["h"]) < VERSION_DESDE[:13] + ":00:00"]
-    desde_v = [r for r in conv if str(r["h"]) >= VERSION_DESDE[:13] + ":00:00"]
-    def _pct(rs, campo):
+    # Conversión POR VERSIÓN (los brazos del A/B son decisiones distintas y no se mezclan).
+    por_version: dict[str, list[dict]] = {}
+    for r in conv:
+        por_version.setdefault(r["version"], []).append(r)
+    horas = sorted({str(r["h"]) for r in conv})
+    top = sorted(por_version, key=lambda v: -sum(r["n"] for r in por_version[v]))[:4]
+    filas_conv = []
+    for h in horas:
+        fila = {"h": h}
+        for i, v in enumerate(top):
+            dato = next((r for r in por_version[v] if str(r["h"]) == h), None)
+            fila[f"pc{i}"] = dato["pct_compra"] if dato else None
+        filas_conv.append(fila)
+    series_conv = [{"y": f"pc{i}", "color": f"p{(i % 4) + 1}", "nombre": v} for i, v in enumerate(top)]
+
+    def _pct(rs: list[dict], campo: str) -> float | None:
         n = sum(r["n"] for r in rs)
         return round(sum(r[campo] * r["n"] for r in rs) / n, 2) if n else None
-    comps = [
-        ("conversion antes", _pct(antes, "pct_compra"), "% compras"),
-        ("conversion nuestra", _pct(desde_v, "pct_compra"), "% compras"),
-        ("p95 ultima hora", max((r["lat_p95"] for r in fiab), default=None), "ms"),
-        ("servido por nosotros", max((r["pct_nuestro"] for r in fiab), default=None), "%"),
-    ]
+
+    kpis_conv = [(f"{v}: {_pct(por_version[v], 'pct_compra')} %", "% compras 6 h") for v in top]
+    kpis_fiab = [("p95 última hora", max((r["lat_p95"] for r in fiab), default=None), "ms"),
+                 ("servido", max((r["pct_nuestro"] for r in fiab), default=None), "%")]
 
     paneles = [
-        {"id": "conv", "tipo": "linea", "titulo": "Compras y clics por hora",
-         "pregunta": "¿Convertimos mejor que antes de salir? (feedback, últimas 6 h)",
-         "series": [{"y": "pct_compra", "color": "compra"}, {"y": "pct_clic", "color": "clic"}],
-         "opts": {"x": "h", "marca": VERSION_DESDE, "dec": 2},
-         "leyenda": "verde = % compras · azul = % clics · línea naranja = salida de nuestra versión",
-         "decision": DECISIONES["conversion_hora"], "rows": conv},
+        {"id": "conv", "tipo": "linea", "titulo": "Compras por hora y por VERSIÓN (A/B)",
+         "pregunta": "¿Qué versión convierte mejor? (feedback ⋈ submissions, últimas 6 h)",
+         "series": series_conv, "opts": {"x": "h", "dec": 2},
+         "leyenda": "una línea por model_version: " + " · ".join(top),
+         "decision": DECISIONES["conversion_hora"], "rows": filas_conv},
         {"id": "kpi", "tipo": "kpi",
-         "titulo": "Resumen de decisión (desde la salida de nuestra versión)",
-         "pregunta": "Un vistazo: ¿vamos mejor, y a qué precio de fiabilidad?",
-         "kpis": [(c[1] if c[1] is not None else "—", c[2]) for c in comps],
+         "titulo": "Resumen de decisión por versión",
+         "pregunta": "Un vistazo: ¿qué versión convierte mejor, y a qué precio de fiabilidad?",
+         "kpis": kpis_conv + kpis_fiab,
          "decision": "Cada cambio entra solo si mejora esto en 30-60 min en vivo; si no, se revierte."},
         {"id": "fiab", "tipo": "linea", "titulo": "Fiabilidad de la respuesta",
          "pregunta": "¿Perdemos peticiones? (últimos 60 min, trozos de 10 min)",

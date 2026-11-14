@@ -9,14 +9,21 @@ import time
 
 import numpy as np
 
+from src.catalogo import cargar_populares
 from src.embeddings import MAX_TEXTOS, PAUSA_S, pedir_embeddings, texto_producto
 from src.rawtree import insertar, query
 
 VECINOS = 20
 
+# Mezcla de populares_contexto (medición de Alex, sáb: el contexto solo hundía el hit de los
+# fríos 0,60 -> 0,46): los primeros GLOBALES items son los más vendidos de siempre (los conocidos
+# buenos) y el resto de la lista es específica del (device, region). Así el relleno nunca puede
+# rendir peor que los populares generales, y la parte de contexto conserva su señal para la cola.
+GLOBALES_ADELANTE = 20
+
 
 def cargar_populares_contexto(hasta: str | None = None) -> dict[tuple[str, str], list[str]]:
-    """(device, region) -> los más comprados por ese tipo de comprador, de más a menos (máx. 50).
+    """(device, region) -> lista de 50 por tipo de comprador, de más a menos (mezclada con los populares generales).
 
     `hasta` ('YYYY-MM-DD'): usar solo datos con ts < hasta. None = todo (en vivo).
     """
@@ -29,9 +36,21 @@ def cargar_populares_contexto(hasta: str | None = None) -> dict[tuple[str, str],
         "ORDER BY d, r, c DESC, pid "          # pid desempata: orden estable
         "LIMIT 50 BY d, r"
     )
-    salida: dict[tuple[str, str], list[str]] = {}
+    por_contexto: dict[tuple[str, str], list[str]] = {}
     for f in filas:
-        salida.setdefault((f["d"], f["r"]), []).append(f["pid"])
+        por_contexto.setdefault((f["d"], f["r"]), []).append(f["pid"])
+
+    # Mezcla segura: los `GLOBALES_ADELANTE` más vendidos de siempre delante,
+    # luego lo específico del contexto, y se completa con más globales hasta 50.
+    globales = cargar_populares(hasta)
+    salida: dict[tuple[str, str], list[str]] = {}
+    for pareja, suyos in por_contexto.items():
+        vistos: set[str] = set()
+        mezclados = globales[:GLOBALES_ADELANTE]
+        vistos.update(mezclados)
+        mezclados += [p for p in suyos if p not in vistos and not vistos.add(p)]
+        mezclados += [p for p in globales if p not in vistos and not vistos.add(p)]
+        salida[pareja] = mezclados[:50]
     return salida
 
 

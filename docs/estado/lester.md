@@ -4,7 +4,7 @@
 - **Actualizado:** sáb 20:40
 
 ## Haciendo ahora
-- **EN VIVO desde 20:38: A/B `e-samen-v1-C` (1/4) frente a `e-samen-v1-AP` (3/4)** (`python -m src.servicio --ap`).
+- **EN VIVO desde 20:47: A/B `e-samen-v1-C` (1/4) frente a `e-samen-v1-AP2` (3/4)** (AP 20:38-20:47 no vale: mezclaba minutos como C) (`python -m src.servicio --ap`).
   -AP = aprendiz de Alex (`src/aprendiz.py`). El servicio carga el Mundo en un hilo propio y lo pone al día cada 1,5 s;
   hasta que existe `data/aprendiz.json` (`python -m src.aprendiz`) el brazo -AP responde como C.
 - A7 (árbol + CF fríos) queda fuera: fríos 1,25 frente a 1,93 de C (análisis de Alex/Fable).

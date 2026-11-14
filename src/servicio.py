@@ -96,12 +96,13 @@ Desde sáb 17:36: CF 3/4 (arrancó 1,58 % vs C 1,00 %, 205 pet.) y C 1/4 de cont
 
 VARIANTES_AP: list[tuple[str, dict]] = [
     ("-C", _V0),                       # control (1/4): v0, populares de su categoría
-    ("-AP", {"_aprendiz": True}),      # 3/4: aprendiz de Alex (pesos aprendidos de NUESTRO feedback en vivo)
-    ("-AP", {"_aprendiz": True}),
-    ("-AP", {"_aprendiz": True}),
+    ("-AP2", {"_aprendiz": True}),     # 3/4: aprendiz de Alex (pesos aprendidos de NUESTRO feedback en vivo)
+    ("-AP2", {"_aprendiz": True}),
+    ("-AP2", {"_aprendiz": True}),
 ]
 """A/B sáb 20:50 (`--ap`): aprendiz (src/aprendiz.py) frente a C. Mientras el Mundo no está listo (~1 min al arrancar),
-el brazo -AP responde como C (y se nota en el log)."""
+el brazo responde como C y esas respuestas se etiquetan "-C" (así la fila -AP2 solo tiene aprendiz de verdad).
+-AP (20:38-20:51) mezclaba 4 min "como C" con aprendiz: por eso se renombró a -AP2."""
 
 MUNDO: "aprendiz.Mundo | None" = None
 MODELO_APRENDIZ: "aprendiz.Modelo | None" = None
@@ -288,7 +289,8 @@ def respuesta_segura(peticion: dict, estado: Estado, mv: str) -> tuple[dict, boo
                 items = aprendiz.recomendar(peticion, MUNDO, MODELO_APRENDIZ, disponibles)
                 if not errores_respuesta(items, disponibles):
                     return {"request_id": peticion["request_id"], "items": items, "model_version": mv}, False
-            params = _V0  # aún sin Mundo (o respuesta rara): como C
+            params = _V0  # aún sin Mundo (o respuesta rara): como C, y etiquetado como C
+            mv = mv[: len(mv) - len(sufijo)] + "-C"
             estado = dataclasses.replace(estado, covisitas={}, comprados={})
         tiene_vistas = any(v.get("product_id") for v in (peticion.get("recent_views") or []))
         if params.get("_combo") and tiene_vistas:
@@ -320,6 +322,17 @@ def respuesta_segura(peticion: dict, estado: Estado, mv: str) -> tuple[dict, boo
 
 
 # ---------------------------------------------------------------- Envío (hilo 2)
+def _sin_los_ya_enviados(lote: list[dict]) -> list[dict] | None:
+    """Las del lote que NO están en submissions. None si la consulta falla."""
+    ids = ", ".join("'" + str(f["request_id"]).replace("'", "") + "'" for f in lote)
+    try:
+        ya = {f["r"] for f in query(f"SELECT request_id::String r FROM {TEAM}.submissions WHERE request_id::String IN ({ids})",
+                                    timeout=2)}
+    except Exception:
+        return None
+    return [f for f in lote if f["request_id"] not in ya]
+
+
 def enviar(cola: queue.Queue, sin_envio: bool, stats: dict) -> None:
     while True:
         lote = cola.get()
@@ -337,6 +350,18 @@ def enviar(cola: queue.Queue, sin_envio: bool, stats: dict) -> None:
                 break
             except Exception as e:
                 log(f"envío falló (intento {intento}): {e}")
+                if intento == 1 and "Read timed out" in str(e):
+                    # El lote SALIÓ y no llegó la confirmación: puede haber entrado. Reenviar a ciegas duplicaba
+                    # respuestas (medido sáb 20:45: 7 duplicadas en 20 s). Se reenvía solo lo que no esté ya.
+                    lote = _sin_los_ya_enviados(lote)
+                    if lote is None:  # no se pudo comprobar: mejor perderlas que mandarlas dos veces
+                        log("no se pudo comprobar qué entró: no se reintenta (evita duplicados)")
+                        enviado = True
+                        break
+                    if not lote:
+                        enviado = True
+                        log("el lote sí había entrado: no se reenvía")
+                        break
         if not enviado:  # dos intentos fallidos: esas peticiones quedan como "missing" en el feedback
             with _CANDADO:
                 stats["perdidas"] += len(lote)

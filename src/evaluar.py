@@ -9,6 +9,7 @@ al carrusel de la última semana; el Estado solo usa datos ANTERIORES a esa sema
 from __future__ import annotations
 
 import argparse
+import os
 import pickle
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import replace
@@ -114,11 +115,13 @@ def metricas(test: list[dict], recs: list[list[str]]) -> dict[str, float]:
     con_clic = [(t, r) for t, r in zip(test, recs) if t["clicked"]]
     con_compra = [(t, r) for t, r in zip(test, recs) if t["purchased"]]
     # IPS del clic en la posición 1: solo cuentan las filas donde nuestro 1º coincide con el 1º que se enseñó,
-    # y cada una pesa 1/propensity (lo que el sistema antiguo enseñaba poco, pesa más).
+    # y cada una pesa 1/propensity (lo que el sistema antiguo enseñaba poco, pesa más). Guardia: propensity
+    # es Dynamic y algún día puede llegar 0 o NULL — un peso infinito o un TypeError matarían la medición.
     pesos, premios = [], []
     for t, r in zip(test, recs):
         coincide = bool(r) and r[0] == t["shown"][0]
-        pesos.append(coincide / t["propensity"][0] if coincide else 0.0)
+        prop = float(t["propensity"][0] or 0) if t.get("propensity") else 0.0
+        pesos.append(coincide / prop if coincide and prop > 0 else 0.0)
         premios.append(float(t["clicked"] == t["shown"][0]))
     suma_pesos = sum(pesos)
     return {
@@ -218,8 +221,10 @@ def main() -> None:
           f"versión medida: {ranking.NOMBRE}\n")
 
     # Cada política en su propio proceso (una por núcleo): mismo resultado, varias veces más rápido.
+    # Límite de 4 procesos: cada uno carga su copia del test y del Estado (cientos de MB) y 9 procesos
+    # simultáneos pueden quedarse sin RAM en un portátil.
     nombres = list(politicas(estado))
-    with ProcessPoolExecutor() as pool:
+    with ProcessPoolExecutor(max_workers=min(4, os.cpu_count() or 1)) as pool:
         salidas = list(pool.map(_evaluar_politica, nombres, [corte] * len(nombres)))
     resultados, aciertos_por_politica = {}, {}
     for nombre, todo, frio, invalidas, acierto in salidas:

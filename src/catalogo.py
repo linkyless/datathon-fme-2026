@@ -50,9 +50,17 @@ def cargar_catalogo(hasta: str | None = None) -> dict[str, dict]:
     return cat
 
 
-def disponibles(cat: dict[str, dict]) -> set[str]:
-    """Los que se pueden recomendar: activos y no agotados."""
-    return {pid for pid, d in cat.items() if d.get("is_active") and not d.get("agotado")}
+def cargar_agotados(hasta: str | None = None) -> set[str]:
+    """Solo los agotados ahora mismo. Consulta ligera: el servicio la repite cada segundo."""
+    filtro = f"AND ts < '{hasta}'" if hasta else ""
+    return {f["product_id"] for f in query(_AGOTADOS.format(filtro=filtro), timeout=5)}
+
+
+def disponibles(cat: dict[str, dict], agotados: set[str] | None = None) -> set[str]:
+    """Los que se pueden recomendar: activos y no agotados (`agotados` = lista más reciente, si se pasa)."""
+    if agotados is None:
+        return {pid for pid, d in cat.items() if d.get("is_active") and not d.get("agotado")}
+    return {pid for pid, d in cat.items() if d.get("is_active") and pid not in agotados}
 
 
 def cargar_populares(hasta: str | None = None) -> list[str]:

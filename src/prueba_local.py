@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 
-from src import catalogo, coldstart, covisitas, estado, ranking, usuarios  # noqa: F401  (que importen)
+from src import catalogo, coldstart, covisitas, estado, ranking, servicio, usuarios  # noqa: F401  (que importen)
 from src.estado import Estado
 from src.validar import errores_respuesta
 

@@ -1,12 +1,13 @@
 # Estado de Lester
 
 - **Rol:** Operador (docs/guias/operador.md)
-- **Actualizado:** sáb 13:25
+- **Actualizado:** sáb 14:00
 
 ## Haciendo ahora
-- Tarea O2 de docs/guias/operador.md (src/servicio.py en modo sin envío).
+- O3: relevo del baseline a `src/servicio.py` (pendiente de decidir la hora).
 
 ## Terminado
+- O2: `src/servicio.py` hecho. Prueba `--sin-envio` 60 s: 186 respondidas (~3,1/s), 0 sustituidas, 0 fallos de sondeo; edad de las peticiones al verlas p50 ≈ 300-420 ms, p95 ≈ 0,46-1,2 s (tras el primer arranque).
 - O1: `src/catalogo.py` probado contra RawTree. 5.100 productos, 5.064 disponibles, 36 agotados/inactivos. Los 10 populares disponibles coinciden EXACTAMENTE con lo que envía el baseline en vivo. `construir()` tarda ~3,4 s. `v0-categoria` sobre 200 peticiones reales: 0,8 ms/petición, 0 inválidas, 158 de 200 distintas del baseline.
 - Clave de RawTree recogida (team_29) y probada.
 - Baseline oficial EN VIVO desde las 12:27 en su carpeta aparte. No pararlo.
@@ -14,6 +15,9 @@
 - Reparto en docs/guias/ y esqueleto de src/ (contrato en src/estado.py).
 
 ## Descubierto (cosas que los demás deben saber)
+- Cada viaje a RawTree cuesta ~300 ms (incluso `SELECT 1`). La consulta del starter sin filtro de tiempo llegó a tardar 10 s: filtrad SIEMPRE por `ts`.
+- El reloj del portátil iba ~8 s por detrás del servidor: las edades se calculan en SQL (`dateDiff('millisecond', ts::DateTime64(3), now64(3))`).
+- Baseline en vivo (13:12-13:42): 99,6 % servido por nosotros, latencia p50 1.238 ms y p95 2.232 ms (cerca del límite de 3 s).
 - En `IN (SELECT ...)` hay que castear las dos partes: `request_id::String IN (SELECT request_id::String ...)`. Sin cast: "Illegal type Dynamic".
 - De las últimas 200 peticiones en vivo: 68 con is_new_user = true (34 %) y 42 sin recent_views (21 %). El cold start pesa mucho.
 - `recent_views` va de más antiguo a más reciente (lo último visto es el último elemento). Los `ts` están en UTC.

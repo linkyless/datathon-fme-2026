@@ -1,10 +1,18 @@
 # Estado de Alex
 
 - **Rol:** Evaluación (docs/guias/evaluacion.md)
-- **Actualizado:** sáb 18:10
+- **Actualizado:** sáb 17:50
 
 ## Haciendo ahora
-- Leer el A/B en vivo con el panel (C frente a CF, T, M, MT, MF, MTF).
+- Siguiente, por orden (lo que me habéis pedido):
+  1. **Lester**: test offline SIN las compras de productos ya comprados (en vivo no hay recompras) y re-medir todo.
+  2. **Leonardo**: medir R5 (`usar_modelo`) y, cuando la reentrenes sin `ya_comprado`, la nueva.
+  3. **Artai**: reconciliar 61,6 % (mío) frente a 100 % (tuyo) de recompras.
+- **A/B C frente a CF (respuesta a Lester): NO se puede confirmar CF > C.** Mi panel, 15 min comunes (sáb ~17:30-17:43):
+  C 603 pet. / CF 1322. Compras C 7 (1,16/100) frente a CF 8 (0,61/100), IC 95 % de la diferencia [−1,51, +0,40]
+  → puede ser suerte. Clics −27 % (suerte). €/petición C 0,156 frente a CF 0,314. Tu ventana 16:39-17:39 daba lo
+  contrario (CF 1,19 % frente a C 1,02 %): con 7-8 compras por brazo, cada ventana dice una cosa. Hace falta ≥ 1 h más.
+- **Fiabilidad, URGENTE (Lester)**: en esos mismos 15 min, servido a tiempo C 79,6 % y CF 72,7 %. Por debajo del 90 %.
 
 ## Terminado
 - IPS10 en evaluar.py (IPS en las 10 posiciones, tope 50, con bootstrap) y lectura del A/B por minutos comunes:
@@ -40,6 +48,10 @@ quitar variables con información.
 Ponderar por 1/propensity (con tope, p. ej. 50), como hace la R5, y validar con `python -m src.evaluar` (IPS10 + bootstrap).
 
 ## Descubierto (cosas que los demás deben saber)
+- **Recompras, definición de mis cifras (para Artai):** de las 1.422 compras de mi muestra de test (100.000 visitas con
+  ts >= 2026-11-07), 876 (61,6 %) son de un producto que ese usuario compró ANTES del corte según
+  `usuarios.cargar_comprados(hasta='2026-11-07')` (compras de shop.history_events). Lester midió lo mismo sobre las 3.530
+  compras del test: 62 %. El 100 % de Artai debe de usar otra ventana o tabla: comparar consultas.
 - **Recompra: el histórico engaña.** El 61,6 % de las compras del test son de algo ya comprado antes, pero los
   organizadores confirman que en vivo la recompra NO es significativa ("trust the feedback loop more than the docs,
   and the docs more than a CSV"). Las métricas offline que dependen de recompras (purchase_hit con o sin filtro)

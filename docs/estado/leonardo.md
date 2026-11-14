@@ -79,6 +79,10 @@
   En vivo (`hasta=None`) el archivo es `data/covisitas_todo.json`.
 
 ## Necesito de alguien
+- **Operador (Lester), URGENTE para el A/B 2×2:** los brazos -M y -MT solo prueban R5 si en TU máquina existe
+  `data/puntuacion.json` (`python -m src.puntuacion`, ~15 s, solo lee de RawTree). Si no existe, `usar_modelo` se
+  ignora y esos brazos reciben la suma de puntos con co-visitas + filtro de comprados (= la v1), no R5. Desde
+  ahora, si falta, sale en consola "AVISO puntuacion: no hay data/puntuacion.json...". Tras crearlo, reinicia.
 - **Evaluación (Alex):** ya está `filtrar_comprados` en `ranking.PARAMS`. Para medir sin filtro:
   `{"filtrar_comprados": False}`. Sigue en True por defecto solo por la prueba de Lester (abajo).
 - **Operador (Lester):** `src/prueba_local.py` línea 54 exige que con piezas no salga lo ya comprado. ¿Puedes

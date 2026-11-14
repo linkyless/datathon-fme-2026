@@ -157,6 +157,9 @@ def modelo_guardado() -> dict | None:
             _modelo = m if m.get("senales") == NOMBRES else None  # señales distintas = archivo viejo: no usar
         except (OSError, ValueError, KeyError):
             _modelo = None
+        if _modelo is None:  # se ve en la consola del servicio: sin esto, usar_modelo se ignoraría en silencio
+            print("AVISO puntuacion: no hay data/puntuacion.json válido -> usar_modelo NO hace nada. "
+                  "Ejecuta: python -m src.puntuacion", flush=True)
     return _modelo
 
 

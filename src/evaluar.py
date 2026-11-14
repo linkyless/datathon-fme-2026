@@ -28,6 +28,11 @@ DATA = Path(__file__).resolve().parent.parent / "data"
 N_TEST = 100_000
 BOOTSTRAP = 200
 """Cuántos remuestreos hace el bootstrap para el intervalo de confianza (ver `bootstrap()`)."""
+MEDIDAS_BOOTSTRAP = ["hit_rate@10", "purchase_hit@10", "IPS10_clics", "IPS10_compras"]
+"""Medidas que lleva el bootstrap (columnas de `aciertos()`). Las IPS10 van por visita, no por 100."""
+TOPE_IPS = 50
+"""Peso máximo de una visita en ips10() (1/propensity puede ser enorme y hacer que la nota baile). Mismo tope que
+usó Leonardo en su chequeo."""
 
 
 def fecha_corte() -> str:
@@ -78,15 +83,22 @@ def cargar_estado(corte: str, recalcular: bool) -> Estado:
     return estado
 
 
-INTERRUPTORES = ["usar_contexto", "usar_vecinos"]
-"""Interruptores de ranking.PARAMS que se prueban en todas sus combinaciones (encendido/apagado)."""
+INTERRUPTORES: list[str] = []
+"""Interruptores de ranking.PARAMS que se prueban en todas sus combinaciones (encendido/apagado) sobre "actual".
+Vacío desde el sáb 17:30: contexto y vecinos ya no cambian nada (EXPERIMENTOS, 16:35)."""
 
 VARIANTES = {  # nombre -> (params, piezas del Estado que se vacían)
-    "actual +revisitas0.3": ({"revisitas": 0.3}, []),  # candidata a v2 (Leonardo)
-    "actual sin covisitas": ({}, ["covisitas"]),        # cuánto aporta cada pieza por separado
-    "actual sin comprados": ({}, ["comprados"]),
+    # Sáb 17:30: co-visitas descartadas de momento (offline y A/B C/D). Re-visitas, con y sin filtro de recompra.
+    "v0 sin filtro (= C en vivo)": ({}, ["covisitas", "comprados"]),
+    "v0 +filtro": ({}, ["covisitas"]),
+    "v0 +revisitas0.3 sin filtro (= E)": ({"revisitas": 0.3}, ["covisitas", "comprados"]),
+    "v0 +revisitas0.3 +filtro": ({"revisitas": 0.3}, ["covisitas"]),
+    "v0 +revisitas1.0 sin filtro": ({"revisitas": 1.0}, ["covisitas", "comprados"]),
 }
 """Variantes sueltas además de las combinaciones de INTERRUPTORES. Para medir otra idea, añade una línea aquí."""
+
+COMPARAR_CON = ("baseline_categoria", "v0 sin filtro (= C en vivo)")
+"""Contra qué políticas se imprime la diferencia con su intervalo de confianza."""
 
 
 def politicas(estado: Estado) -> dict[str, tuple[Estado, dict]]:
@@ -124,7 +136,10 @@ def metricas(test: list[dict], recs: list[list[str]]) -> dict[str, float]:
         pesos.append(coincide / prop if coincide and prop > 0 else 0.0)
         premios.append(float(t["clicked"] == t["shown"][0]))
     suma_pesos = sum(pesos)
+    ips = [ips10(t, r) for t, r in zip(test, recs)]
     return {
+        "IPS10_clics%": 100 * sum(c for c, _ in ips) / max(len(test), 1),
+        "IPS10_compras%": 100 * sum(p for _, p in ips) / max(len(test), 1),
         "n": len(test),
         "hit_rate@10": sum(t["clicked"] in r for t, r in con_clic) / max(len(con_clic), 1),
         "purchase_hit@10": sum(t["purchased"] in r for t, r in con_compra) / max(len(con_compra), 1),
@@ -134,17 +149,35 @@ def metricas(test: list[dict], recs: list[list[str]]) -> dict[str, float]:
     }
 
 
-def aciertos(test: list[dict], recs: list[list[str]]) -> np.ndarray:
-    """Una fila por visita: [¿lo clicado está en nuestros 10?, ¿lo comprado está?]. 1/0, o NaN si no hubo clic/compra.
+def ips10(t: dict, recs: list[str]) -> tuple[float, float]:
+    """IPS en las 10 posiciones: (clics, compras) esperados en esta visita si hubiéramos enseñado `recs`.
 
-    La media de cada columna (sin los NaN) es el hit_rate@10 y el purchase_hit@10. Se guarda visita a visita
-    para poder hacer el bootstrap."""
-    salida = np.full((len(test), 2), np.nan)
+    Por cada producto que el sistema antiguo enseñó y que también está en nuestros 10, si se clicó/compró suma
+    1/propensity (con tope TOPE_IPS). Lo que el sistema antiguo enseñaba poco (p. ej. productos ya vistos) pesa
+    más cuando aparece, y así se compensa que salga poco. No tiene en cuenta la posición dentro de la lista."""
+    nuestros = set(recs)
+    clics = compras = 0.0
+    for pid, prop in zip(t["shown"], t.get("propensity") or []):
+        prop = float(prop or 0)  # misma guardia que en metricas(): 0 o NULL no puede dar peso infinito
+        if pid in nuestros and prop > 0:
+            peso = min(1 / prop, TOPE_IPS)
+            clics += peso * (t["clicked"] == pid)
+            compras += peso * (t["purchased"] == pid)
+    return clics, compras
+
+
+def aciertos(test: list[dict], recs: list[list[str]]) -> np.ndarray:
+    """Una fila por visita, con las 4 columnas de MEDIDAS_BOOTSTRAP.
+
+    hit y purchase_hit: 1/0, o NaN si no hubo clic/compra (su media sin NaN es el hit_rate@10 y el
+    purchase_hit@10). IPS: el valor de ips10() en esa visita. Se guarda visita a visita para el bootstrap."""
+    salida = np.full((len(test), len(MEDIDAS_BOOTSTRAP)), np.nan)
     for i, (t, r) in enumerate(zip(test, recs)):
         if t["clicked"]:
             salida[i, 0] = t["clicked"] in r
         if t["purchased"]:
             salida[i, 1] = t["purchased"] in r
+        salida[i, 2:] = ips10(t, r)
     return salida
 
 
@@ -182,7 +215,8 @@ def _evaluar_politica(nombre: str, corte: str) -> tuple[str, dict, dict, int, np
 
 
 def imprimir(resultados: dict[str, dict]) -> None:
-    columnas = ["n", "hit_rate@10", "purchase_hit@10", "IPS_ctr_slot1", "SNIPS_ctr_slot1", "slot1_matches", "inválidas"]
+    columnas = ["n", "hit_rate@10", "purchase_hit@10", "IPS10_clics%", "IPS10_compras%", "IPS_ctr_slot1",
+                "SNIPS_ctr_slot1", "slot1_matches", "inválidas"]
     print(f"{'política':<36}" + "".join(f"{c:>17}" for c in columnas))
     for nombre, fila in resultados.items():
         celdas = [f"{fila[c]:>17.4f}" if isinstance(fila[c], float) else f"{fila[c]:>17}" for c in columnas]
@@ -197,13 +231,13 @@ def imprimir_diferencias(aciertos_por_politica: dict[str, np.ndarray], contra: s
         return "sube" if lo > 0 else "baja" if hi < 0 else "puede ser suerte"
 
     print(f"\nDiferencia frente a {contra} (intervalo de confianza del 95 %, bootstrap de {BOOTSTRAP}):")
-    print(f"{'política':<36}{'Δ hit_rate@10 [IC 95 %]':>32}{'':>18}{'Δ purchase_hit@10 [IC 95 %]':>32}")
+    print(f"{'política':<36}" + "".join(f"{'Δ ' + m + ' [IC 95 %]':<52}" for m in MEDIDAS_BOOTSTRAP))
     for nombre, a in aciertos_por_politica.items():
         if nombre == contra:
             continue
         celdas = ""
         for d, lo, hi in bootstrap(a, aciertos_por_politica[contra]):
-            celdas += f"{d:>+10.4f} [{lo:+.4f}, {hi:+.4f}]  {veredicto(lo, hi):<16}"
+            celdas += f"{d:>+9.4f} [{lo:+.4f}, {hi:+.4f}] {veredicto(lo, hi):<17}"
         print(f"{nombre:<36}{celdas}")
 
 
@@ -234,7 +268,7 @@ def main() -> None:
     imprimir({k: v for k, v in resultados.items() if "frío" not in k})
     print("\nSegmento frío (sin vistas recientes):")
     imprimir({k: v for k, v in resultados.items() if "frío" in k})
-    for contra in ("baseline_categoria", "baseline_starter", "actual"):  # "actual": ¿qué aporta cada variante?
+    for contra in COMPARAR_CON:
         imprimir_diferencias(aciertos_por_politica, contra)
 
 

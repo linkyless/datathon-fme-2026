@@ -21,7 +21,7 @@ from collections import Counter
 
 from src.estado import Estado
 
-NOMBRE = "e-samen-v0"
+NOMBRE = "e-samen-v1"
 """Va en model_version, que SALE EN EL LEADERBOARD PÚBLICO: solo nombre en clave + versión (e-samen-v1, e-samen-v2...),
 nunca lo que hace (los demás equipos lo leerían). Qué es cada versión se apunta en docs/EXPERIMENTOS.md."""
 

@@ -1,10 +1,10 @@
 # Estado de Leonardo
 
 - **Rol:** Ranking (docs/guias/ranking.md)
-- **Actualizado:** sáb 14/11 ~15:30 (R1, R2 y R3 ideas 1-4)
+- **Actualizado:** sáb 14/11 ~16:15
 
 ## Haciendo ahora
-- Esperando la medición oficial de Alex. Siguiente: R4 (tendencias), que necesita un campo nuevo del Operador.
+- Decidir con Lester un A/B en vivo v0 frente a v1 (co-visitas). Siguiente: R4 (tendencias).
 
 ## Terminado
 - R1: `cargar_covisitas(hasta)` en src/covisitas.py. Con `hasta='2026-11-07'`: co-visitas para 5.000 productos,
@@ -22,18 +22,21 @@
   `data/covisitas_<hasta>_exp0.json`.
 - R3 ideas 2-4 como claves de `PARAMS`, todas apagadas: `afin_sub`, `afin_marca`, `normalizar_fila`,
   `precio_coherente`, `lambda_precio`. Probado `decaimiento` 0.5 y 0.9: casi igual que 0.7.
-- Chequeo orientativo (mío, NO la evaluación oficial), sobre las 3.530 compras del carrusel con ts >= 2026-11-07:
-  ¿lo comprado está en nuestros 10?
+- Arreglos que pidió Alex en ranking.py: los vecinos solo se usan si hay co-visitas cargadas y el producto no está
+  en ellas (producto nuevo); `sorted(disponibles)` solo se calcula si se llega a usar. recommend() pasa de ~2 ms
+  a 0,025 ms por petición en mi chequeo.
+- Chequeo orientativo (mío, NO la evaluación oficial), 3.530 compras del carrusel con ts >= 2026-11-07,
+  ¿lo comprado está en nuestros 10? (CORREGIDO a las 16:15: mi primer "v0" tenía los vecinos encendidos por error)
   | Versión | top10 | IPS (1/propensity, recorte 50) |
   |---|---|---|
-  | v0 (populares de la categoría) | 1,87 % | 0,335 |
-  | co-visitas exponente 0.5 | 11,47 % | 1,892 |
-  | co-visitas exponente 0 (v1 actual) | 14,76 % | 2,182 |
-  | v1 + revisitas 0.3 | 15,84 % | 2,283 |
-  | v1 + revisitas 0.3 + afin_sub 0.5 | 15,07 % | 2,223 |
-  | v1 + revisitas 0.3 + afin_marca 0.5 | 15,75 % | 2,275 |
-  | v1 + revisitas 0.3 + lambda_precio 0.1 | 15,67 % | — |
-  Diferencia (v1 actual + revisitas 0.3) − (v1 con exponente 0.5): +4,36 puntos, IC95 bootstrap [3,71; 5,13].
+  | v0 (populares de la categoría, lo que está en vivo) | 31,73 % | 4,101 |
+  | v1 co-visitas exponente 0 | 14,84 % | 2,180 |
+  | v1 + revisitas 0.3 | 15,92 % | 2,282 |
+  | v1 co-visitas exponente 0.5 | 11,47 % | 1,892 |
+  | mezcla 2 huecos co-visitas + 8 v0 | 31,08 % | 3,842 |
+  OJO: el historial premia parecerse al carrusel antiguo (de media 5 de sus 10 huecos eran top-10 de la categoría
+  de lo último visto, y 2.959 de las 3.530 compras son de ese top-10). Offline NO se puede decidir si las
+  co-visitas son mejores o peores en vivo. Hace falta un A/B en vivo v0 frente a v1.
 
 ## Descubierto (cosas que los demás deben saber)
 - Corte para evaluar offline (último día de shop.history_sessions menos 7): `2026-11-07`.
@@ -71,3 +74,7 @@
 - **Operador (Lester):** cuando quieras A/B en vivo: `VARIANTES = [("-A", {}), ("-B", {"revisitas": 0.3})]`.
   En vivo, `cargar_covisitas(None)` lee `data/covisitas_todo_exp0.json` si existe (no se refresca solo: se
   calcula con todo el historial la primera vez, ~7 s).
+- **Operador (Lester):** para el A/B v0 frente a v1 necesito un interruptor `usar_covisitas` en `PARAMS`, pero
+  `src/prueba_local.py` (línea 55) exige que con piezas la co-visita vaya primera con los PARAMS por defecto.
+  Si lo pongo apagado por defecto, esa prueba falla. ¿Lo pruebas pasando `{"usar_covisitas": True}` en esa línea,
+  o prefieres que quede encendido por defecto y el A/B sea `[("-A", {"usar_covisitas": False}), ("-B", {})]`?

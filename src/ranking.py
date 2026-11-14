@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import math
 from collections import Counter
+from itertools import chain
 
 from src.estado import Estado
 
@@ -66,6 +67,12 @@ usar_vecinos / usar_contexto: piezas de Artai (D3, D4). APAGADAS hasta que Evalu
 sin interruptor, un simple reinicio del servicio cambiaría el modelo en vivo sin medirlo."""
 
 
+def _todos(estado: Estado):
+    """Todos los disponibles en orden fijo. Es un generador: solo se ordena si de verdad se llega a usar
+    (casi nunca), porque ordenar 5.000 IDs era el 95 % del tiempo de recommend()."""
+    yield from sorted(estado.disponibles)
+
+
 def _precio(estado: Estado, pid: str) -> float:
     try:
         return float(estado.catalogo.get(pid, {}).get("price_eur") or 0)
@@ -92,7 +99,9 @@ def recommend(peticion: dict, estado: Estado, params: dict | None = None) -> lis
 
     # 2) Productos nuevos (sin co-visitas): usar los de descripción parecida.
     for k, pid in enumerate(reversed(vistos) if p["usar_vecinos"] else []):
-        if pid not in estado.covisitas:
+        # "Nuevo" = no aparece en las co-visitas del historial. Si las co-visitas están vacías no sabemos qué es
+        # nuevo, así que no se usan vecinos (si no, se aplicarían a TODO y taparían el resto: medido por Alex).
+        if estado.covisitas and pid not in estado.covisitas:
             for pos, otro in enumerate(estado.vecinos.get(pid, [])):
                 puntos[otro] += 0.5 * (p["decaimiento"] ** k) / (pos + 1)
 
@@ -142,14 +151,14 @@ def recommend(peticion: dict, estado: Estado, params: dict | None = None) -> lis
     ctx = peticion.get("context") or {}
     por_contexto = (estado.populares_contexto.get((str(ctx.get("device", "")), str(ctx.get("region", ""))), [])
                     if p["usar_contexto"] else [])
-    for fuente in (de_su_categoria, por_contexto, estado.populares, sorted(estado.disponibles)):
+    for fuente in (de_su_categoria, por_contexto, estado.populares, _todos(estado)):
         for pid in fuente:
             if len(elegidos) == 10:
                 return elegidos
             if pid not in elegidos and vale(pid):
                 elegidos.append(pid)
     # Si incluso así faltan (el usuario lo compró casi todo), relajar la regla de "ya comprado".
-    for pid in estado.populares + sorted(estado.disponibles):
+    for pid in chain(estado.populares, _todos(estado)):
         if len(elegidos) == 10:
             break
         if pid not in elegidos and pid in estado.disponibles:

@@ -67,6 +67,11 @@ en UNA decisión que podemos tomar hoy:
 | ¿Qué se está moviendo? | EWMA de vistas/carritos/compras por subcategoría (últimos 2 h vs 24 h) | sparklines por subcategoría | subir tendencias al ranking, explorar en slots 8-10 |
 | ¿Cómo evoluciona la tienda? | altas, cambios de precio, roturas de stock (catalog_updates) | línea diaria + días de stock | cada cuánto refrescar catálogo y cuándo re-embeber productos nuevos |
 
+> Nota de reglas (sáb ~16:45): una rotura de stock tarda hasta ~2 s en verse en `catalog_updates`, así que
+> ahora un producto agotado hace menos de 5 s ya no invalida la respuesta (ese slot no vende, pero el resto
+> de la lista cuenta). Cambia cómo interpretamos "invalid" en el panel y alivia la presión del refresco de
+> stock en vivo — pero no cambia el objetivo: leer el stock con la cadencia correcta y sin catálogo congelado.
+
 Todo el panel lee de las MISMAS tablas que usan el evaluador y el servicio (`team_29.feedback`,
 `shop.events`, `shop.catalog_updates`, `docs/EXPERIMENTOS.md`) → **criterio 3 de Tukey (coherencia)**: lo
 que ves en el panel es exactamente el número con el que decidimos; ninguna métrica tiene dos definiciones.

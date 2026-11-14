@@ -1,12 +1,14 @@
 # Estado de Alex
 
 - **Rol:** Evaluación (docs/guias/evaluacion.md)
-- **Actualizado:** sáb 17:15
+- **Actualizado:** sáb 17:50
 
 ## Haciendo ahora
 - Leer el A/B en vivo con el panel (cuando lleve ≥ 1 h). Re-medir cuando Leonardo añada `filtrar_comprados`.
 
 ## Terminado
+- IPS10 en evaluar.py (IPS en las 10 posiciones, tope 50, con bootstrap) y lectura del A/B por minutos comunes:
+  C (v0) sigue siendo la mejor (EXPERIMENTOS 17:40).
 - E4: `evaluar.py` imprime, para cada variante, la diferencia frente a v0, starter y la actual con su intervalo
   de confianza del 95 % (bootstrap emparejado, 200) y un veredicto: sube / baja / puede ser suerte / idéntico.
 - E2 (v1): medida `e-samen-v1` y sus piezas por separado. **NO APTA**: purchase_hit 0.16 vs 0.86 de la v0.
@@ -17,6 +19,24 @@
   (~7 min). Veredicto: `usar_vecinos` y `usar_contexto` **NO APTOS** de momento (números en EXPERIMENTOS). Dejarlos apagados.
 - `src/catalogo.py` probado contra RawTree (lectura): 5100 productos, 5063 disponibles; el filtro `hasta` funciona.
 - E1: `src/evaluar.py` (`python -m src.evaluar`). Test y Estado se guardan en `data/` (no se sube). Primera fila en EXPERIMENTOS.
+
+## Para el modelo de Leonardo (gradient boosting): qué sabemos de cada señal (medido)
+Lo medido es si cada pieza sirve como REGLA para ordenar la lista entera. Un árbol decide él mismo los pesos: no
+quitar variables con información.
+| Señal (variable por producto candidato) | Qué hemos medido | Para el árbol |
+|---|---|---|
+| **Ya comprado por este usuario** | 61,6 % de las compras del test son recompras; filtrarlas hunde purchase_hit 0.86 → 0.32; organizadores confirman que el modelo premia recomprar | **La más importante. Imprescindible** |
+| Popular en la categoría de lo último visto | La v0 (solo esto) gana a todo, offline y en vivo (A/B C) | **Imprescindible** |
+| Popularidad global | Baseline del starter: 0.54 purchase_hit (v0: 0.86) | Útil (base) |
+| Ya visto en esta sesión (re-visita) | Cuando se enseñaba, 1,96 compras/100 huecos vs 0,12 (Leonardo). Como regla: −4 % IPS10 offline, igual en vivo | Útil como variable, no como regla |
+| Puntuación de co-visita | Como regla pierde (clics −41 % en vivo, real) | Dudosa: dejarla, pesará poco si no sirve |
+| Contexto (device, región) | Tras la mezcla de Artai no cambia nada; antes, efecto no significativo | Probablemente poco útil |
+| Vecinos por descripción | El historial no tiene productos nuevos: no medible offline | Sin datos para entrenar; útil solo en vivo (frío) |
+| Tendencia (última media hora) | A/B T: 12 min, no significativo | No medido |
+| Precio | No medido | No medido |
+
+**Ojo al entrenar:** el historial solo tiene etiquetas de lo que el carrusel antiguo enseñó (sesgado a lo popular).
+Ponderar por 1/propensity (con tope, p. ej. 50), como hace la R5, y validar con `python -m src.evaluar` (IPS10 + bootstrap).
 
 ## Descubierto (cosas que los demás deben saber)
 - **La gente recompra**: el 61,6 % de las compras del carrusel en el test (876 de 1422) son productos que ese
@@ -32,8 +52,8 @@
   lo que enseñó. Por eso baseline_categoria saca 0.76 de hit_rate pero un SNIPS más bajo que baseline_starter.
 
 ## Necesito de alguien
-- **Leonardo**: interruptor `filtrar_comprados` en `PARAMS`, APAGADO por defecto (offline hunde purchase_hit
-  0.86 → 0.32). Probar también lo contrario: empujar lo ya comprado.
+- **Leonardo**: probar lo contrario del filtro: EMPUJAR lo ya comprado por el usuario (parámetro en `PARAMS`);
+  lo mido offline en minutos. Para el gradient boosting, ver la tabla de señales de arriba.
 - **Lester**: el brazo A del A/B (v1 sin co-visitas) NO es la v0: lleva el filtro de comprados. Propuesta:
   A = v0 real (sin co-visitas ni filtro), B = co-visitas sin filtro. Y fiabilidad: 80 % servido a las 16:30
   (392 tarde, p95 2,7 s): `python -m src.panel --horas 1`.

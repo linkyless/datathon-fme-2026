@@ -1,12 +1,27 @@
 # Estado de Leonardo
 
 - **Rol:** Ranking (docs/guias/ranking.md)
-- **Actualizado:** sáb 14/11 ~18:30
+- **Actualizado:** sáb 14/11 ~19:30
 
 ## Haciendo ahora
-- R5 reentrenada SIN recompras (lo que pidieron Lester y Alex). Espero la medición de Alex para decidir R6.
+- R6 (LightGBM) hecha y conectada con `usar_arbol` (apagada). Espero la medición de Alex.
 
 ## Terminado
+- R6 LightGBM: `python -m src.arbol` (~17 s) -> data/arbol.txt + data/arbol.json (no se suben). Entrenado como
+  ELECCIÓN dentro del carrusel (objetivo lambdarank: cada visita con compra es un grupo de 10, gana el comprado),
+  con los datos de la v2 (data/eleccion.pkl), sin recompras: 8.105 compras de entreno (01/10 -> 07/11), test
+  1.298 (>= 07/11). Perfiles (Artai) y co-visitas de las filas de entreno con datos < 01/10; las del test, < 07/11.
+  93 árboles de 15 hojas (parada temprana con la última semana del entreno).
+  Acierto del 1.º en el test, mismo protocolo que la v2 (con su puesto real): **0,384** (v2: 0,349); en los 3
+  primeros 0,669. Con todos en puesto 1 (como en vivo): 0,328 / 0,659. Azar: 0,100 / 0,300.
+  Lo que más pesa (% de ganancia): puesto 26 · tasa_ips (perfil de producto de Artai) 21 · calidad 20 ·
+  popularidad 8 · re-visita 8 · co-visita 6 · precio relativo a lo visto 2 · precio relativo al habitual 2.
+  Trampa encontrada: la calidad "dejando uno fuera" (como la v2) hace que el árbol memorice el valor exacto del
+  comprado (acierto 0,112 = azar). Arreglado con calidad "fuera de pliegue" (5 pliegues).
+  En recommend(): candidatos = todo lo disponible de la categoría de lo último visto (+ lo visto de ella); sin
+  vistas, los 300 mejores por calidad y popularidad; sin lo ya comprado si filtrar_comprados. Comprobado sobre
+  3.000 peticiones: 0 inválidas, 0 con algo ya comprado, p50 2,45 ms, p95 3,25 ms, máx 4,68 ms.
+  Dependencia nueva: `lightgbm` en requirements.txt.
 - R5 v2 (sin recompras): quitada la señal `ya_comprado`; al entrenar se descartan las visitas cuya compra era
   algo que el comprador ya tenía (3.715 de 6.545; quedan 2.830 compras) y las filas de productos que ya tenía.
   En recommend(), lo ya comprado ya no es candidato y con `filtrar_comprados` (True) se quita.
@@ -89,6 +104,12 @@
   En vivo (`hasta=None`) el archivo es `data/covisitas_todo.json`.
 
 ## Necesito de alguien
+- **Evaluación (Alex):** mide R6: `{"usar_arbol": True}` frente a CF. Antes: `pip install -r requirements.txt`
+  (lightgbm) y `python -m src.arbol` (crea data/arbol.txt y arbol.json; si falta, la clave no hace nada y avisa).
+  El Estado necesita `perfiles_comprador` y `perfiles_producto` (los de Artai) para que el árbol use el perfil.
+- **Operador (Lester):** si Alex da el ok para R6, en tu máquina ANTES de reiniciar: `pip install lightgbm` y
+  `python -m src.arbol` (~17 s, solo lee de RawTree; usa data/eleccion.pkl o lo descarga). Variante:
+  `{"usar_arbol": True}`. Tarda ~2,5 ms por petición (máx. medido 4,7 ms).
 - **Evaluación (Alex):** mide R5 v2: `{"usar_modelo": True}` (filtrar_comprados queda en True). Antes hay que
   regenerar `data/puntuacion.json` con `python -m src.puntuacion` (~15 s): el archivo viejo ya no vale (tenía la
   señal `ya_comprado`) y, si no se regenera, `usar_modelo` no hace nada y avisa en consola. Candidatos: los 40

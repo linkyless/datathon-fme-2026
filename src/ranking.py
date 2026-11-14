@@ -23,7 +23,7 @@ from itertools import chain
 
 import numpy as np
 
-from src import puntuacion
+from src import arbol, puntuacion
 from src.estado import Estado
 
 NOMBRE = "e-samen-v1"
@@ -85,7 +85,11 @@ PARAMS: dict = {"decaimiento": DECAIMIENTO, "revisitas": REVISITAS, "afin_sub": 
                 "afin_marca": AFIN_MARCA, "normalizar_fila": NORMALIZAR_FILA,
                 "precio_coherente": PRECIO_COHERENTE, "lambda_precio": LAMBDA_PRECIO,
                 "usar_vecinos": False, "usar_contexto": False, "tendencia": TENDENCIA,
-                "usar_modelo": False, "filtrar_comprados": True, "frio_historial": FRIO_HISTORIAL}
+                "usar_modelo": False, "filtrar_comprados": True, "frio_historial": FRIO_HISTORIAL,
+                "usar_arbol": False}
+"""usar_arbol (R6): los 10 los elige el LightGBM de src/arbol.py entre los productos de la categoría de lo último
+visto (sin vistas: los 300 mejores por calidad y popularidad). Necesita data/arbol.txt y data/arbol.json
+(python -m src.arbol) y la librería lightgbm; si falta algo, se ignora y avisa en consola. APAGADO."""
 """filtrar_comprados: quitar lo ya comprado. En vivo (API, 1 h, ~2.800 pet./brazo) CF (CON filtro) 1,06 % vs C
 (sin filtro) 1,02 %: en total, empate. Se deja encendido (lo que corre en vivo con más tráfico). OJO: CF = CON filtro."""
 """usar_modelo (R5): los 10 los elige la regresión logística de src/puntuacion.py en vez de la suma de puntos.
@@ -229,7 +233,12 @@ def recommend(peticion: dict, estado: Estado, params: dict | None = None) -> lis
                 puntos[pid] += p["revisitas"] * (p["decaimiento"] ** k) * tope
 
     elegidos = None
-    if p["usar_modelo"]:
+    if p["usar_arbol"] and (modelo_arbol := arbol.modelo_guardado()) is not None:
+        cand = arbol.candidatos(peticion, estado, modelo_arbol, vale)
+        if cand:
+            s = arbol.puntuar(peticion, cand, estado, modelo_arbol)
+            elegidos = [cand[i] for i in np.argsort(-s, kind="stable")[:10]]
+    if elegidos is None and p["usar_modelo"]:
         elegidos = _con_modelo(peticion, estado, vistos, puntos, lift, p["tendencia"], vale)
     if elegidos is None:
         elegidos = [pid for pid, _ in puntos.most_common() if vale(pid)][:10]

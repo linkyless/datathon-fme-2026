@@ -4,6 +4,16 @@
 - **Actualizado:** sáb ~19:15
 
 ## Haciendo ahora
+- **Lectura madrugada del leaderboard (dom ~05:30, tras apuntar lo de los nombres) — datos en /tmp, fuente /api/state?by=model**
+  - Equipo a las 02:18-03:18: **1,17** (puesto 24) mientras nuestros brazos -AP7/-AP7C/-AP7S van **1,70-1,84** (5.576 pet.). ⚠️ La cuenta no sale: si todo el tráfico fuese esos tres brazos, la media sería ~1,78. Hay ~40 % del tráfico cayendo a algo peor (fallback/missing de madrugada u otra versión oculta). **Verificar con src/panel --horas 1: es el mayor silencio que tenemos.** (baseline: 0,54).
+  - Los nombres de versión de los de arriba, descodificados:
+    - team_06 (líder, 2,23-2,40): `skore_money` = puntuar por INGRESO esperado (p×precio), 4 variantes simultáneas de ~2.700 pet. cada una (v31/v38/v39/v40), iteración continua.
+    - team_23 (familia `rate`): **tasas de conversión por producto aprendidas del feedback EN VIVO**, con variantes por segmento: rate-new3x/n-new/known/nonew... Su ráfaga `pop-log` llega a 2,73 (fríos 3,14, solo 219 pet.). OJO: la tasa histórica (tasa_ips) no aporta a AP3 (medido); la que cambia es la tasa calculada con lo ENSEÑADO por nosotros hoy.
+    - team_42: `buy-nb` y su mejor **`blend-nb` 2,36** = mezcla de dos cabezas (naive bayes + algo más): el blend es su peldaño del día 2.
+    - team_01 `shaleE-n` **3,22** y team_26 `m32afc` **3,77** (conv == frío, cold-only): el especialista de fríos sigue subiendo en la madrugada. Confirma el enrutamiento frío/cálido como la mayor palanca medida.
+    - team_28 `v5-hybrid+m2-intent+m3-live` 2,26: apilado de módulos (híbrido + intención/carrito + en vivo).
+    - team_37 `fz-v10-nocorr` 2,18 ≈ con corrección 2,21: esa corrección no mueve nada.
+  - Traducción a tres candidatas concretas para nosotros, por evidencia: (1) **enrutamiento frío/cálido + especialista de fríos** (números 3,2-3,8 medidos en dos equipos); (2) **tasa de conversión por producto EN VIVO** como señal del aprendiz (AP8: compras cuando lo enseñamos HOY / veces enseñado HOY, con ventana de horas — la histórica ya se probó y no aporta); (3) **blend de puntuaciones** (árbol + aprendiz, normalizados, peso a medir — el blend-nb del 4º/6º es su mejor versión). Todas requieren el A/B de Evaluación; nada en vivo esta noche sin eso.
 - **Revisión de puntos ciegos tras el A7 (sáb ~19:45, después del pull)** — para comunicar al equipo:
   1. **`arbol.py` filtra memoria en vivo (Leonardo)**: `arbol._cache` usa claves por `id(estado.catalogo)`, y el servicio sustituye el catálogo cada 15 s → cada refresco añade entradas sin borrar las viejas (verificado: 24 entradas tras 50 refrescos). Unas 20 MB/hora; por la noche pueden ser cientos de MB. Fix de una línea: `_cache.clear()` antes de asignar (vivo.py ya lo hace así).
   2. **`construir_perfiles` NO está programado en el servicio** (solo `cargar_perfiles`, lectura): los perfiles del comprador/producto quedan congelados a mi construcción de las 19:00. En la final: compradores nuevos sin perfil (features del árbol a 0, degradación suave) y `tasa_ips` congelada al sábado. Añadir `intentar("perfiles", 3600, construir_perfiles(None))` al hilo lento (Lester).

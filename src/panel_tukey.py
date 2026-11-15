@@ -21,9 +21,6 @@ from src.rawtree import query
 DATA = Path(__file__).resolve().parent.parent / "data"
 PANEL = DATA / "panel.html"
 
-# Desde cuándo responde nuestra versión (e-samen-v0), en UTC; el panel la marca en los gráficos.
-VERSION_DESDE = "2026-11-14 13:08:00"
-
 # Cada panel: pregunta -> indicador -> decisión. El gráfico concreto se elige por la forma de los datos
 # (líneas para series temporales, barras para categorías: criterio 2 de Tukey, adecuación).
 PANELS_SQL: dict[str, str] = {
@@ -143,11 +140,13 @@ DECISIONES = {
 
 _FOOT = """
 <div class="foot"><b>Fuentes y definiciones</b> (criterio de coherencia): conversion y latencia de
-<code>team_29.feedback</code> (exclude request_id='__init__'; <i>compra</i> = purchased != ''); posiciones del
+<code>team_29.feedback</code> (exclude request_id='__init__'; <i>compra</i> = purchased != ''); version de cada
+respuesta por union con <code>team_29.submissions</code> (los brazos del A/B NO se mezclan); posiciones del
 carrusel historico de <code>shop.history_sessions</code> (<i>imps</i> = shows por posicion; <i>clicked/purchased</i>
 guardan product_id); frio de <code>shop.requests</code>; tendencias de <code>shop.events</code> vistas 2 h vs 2 h
-previas; tienda de <code>shop.catalog_updates</code>. Todos los ts en UTC. Version actual marcada desde
-<b>%(version_desde)s</b> UTC. Generado por <code>python -m src.panel_tukey</code>.
+previas; tienda de <code>shop.catalog_updates</code>; recompras de <code>history_sessions</code> de las ultimas
+7 dias contra compras previas de <code>shop.events</code> (60 dias: dato historico, NO del stream en vivo).
+Todos los ts en UTC. Generado por <code>python -m src.panel_tukey</code>.
 </div>"""
 
 _CSS = """
@@ -216,7 +215,8 @@ function barChart(rows, opts){
     const y = T + i*((H-T-B)/rows.length) + 1.5;
     const w1 = (W-L-R)*(r.a/mx);
     out += `<rect x='${L}' y='${y}' width='${w1}' height='${bw}' rx='2' fill='${COL[opts.colorA || 'nuestro']}'/>`;
-    out += `<text x='${L+w1+4}' y='${y+bw-1}' fill='${COL.texto}'>${r.a.toLocaleString('es-ES')}${opts.suf ?? ''}</text>`;
+    const extra = opts.segunda && r[opts.segunda] !== undefined ? ` <tspan fill='${COL.ambar}'>(${r[opts.segunda]})</tspan>` : '';
+    out += `<text x='${L+w1+4}' y='${y+bw-1}' fill='${COL.texto}'>${r.a.toLocaleString('es-ES')}${opts.suf ?? ''}${extra}</text>`;
     if (r.b !== undefined){ const w2 = (W-L-R)*((r.b ?? 0)/mx);
       out += `<rect x='${L}' y='${y+bw+1.5}' width='${w2}' height='${Math.max(bw-2,1)}' rx='2' fill='${COL.otros}'/>`;
       out += `<text x='${L+w2+4}' y='${y+2*bw}' fill='${COL.texto}'>${(r.b ?? 0).toLocaleString('es-ES')}${opts.suf ?? ''}</text>`; }
@@ -283,8 +283,13 @@ def _regenerar() -> None:
         return round(sum(r[campo] * r["n"] for r in rs) / n, 2) if n else None
 
     kpis_conv = [(f"{v}: {_pct(por_version[v], 'pct_compra')} %", "% compras 6 h") for v in top]
-    kpis_fiab = [("p95 última hora", max((r["lat_p95"] for r in fiab), default=None), "ms"),
-                 ("servido", max((r["pct_nuestro"] for r in fiab), default=None), "%")]
+    # La fiabilidad de la hora se pondera por peticiones (el máx. de trozos no es el % de la hora).
+    # pct_nuestro llega en % (85-100): se pasa a proporción antes de ponderar.
+    n_hora = sum(r["n"] for r in fiab) or None
+    servido_hora = round(100 * sum(r["n"] * (r["pct_nuestro"] / 100) for r in fiab) / n_hora, 1) if n_hora else None
+    p95_hora = round(sum((r["lat_p95"] or 0) * r["n"] for r in fiab) / n_hora, 0) if n_hora else None
+    kpis_fiab = [("p95 última hora", p95_hora, "ms"),
+                 ("servido última hora", servido_hora, "%")]
 
     paneles = [
         {"id": "conv", "tipo": "linea", "titulo": "Compras por hora y por VERSIÓN (A/B)",
@@ -301,7 +306,7 @@ def _regenerar() -> None:
          "pregunta": "¿Perdemos peticiones? (últimos 60 min, trozos de 10 min)",
          "series": [{"y": "lat_p95", "color": "rojo"}, {"y": "lat_p50", "color": "otros"}],
          "opts": {"x": "t", "dec": 0},
-         "leyenda": f"servido por nosotros: {max((r['pct_nuestro'] for r in fiab), default='—')} % · p50 y p95 de latencia (ms) · 3.000 ms = fuera de tiempo",
+         "leyenda": f"servido por nosotros en la hora (ponderado por peticiones): {servido_hora} % · p50 y p95 de latencia (ms) · 3.000 ms = fuera de tiempo",
          "decision": DECISIONES["fiabilidad"], "rows": fiab},
         {"id": "fb", "tipo": "barras", "titulo": "Motivos de fallback (60 min)",
          "pregunta": "Si se perdió una petición, ¿por qué?",
@@ -335,9 +340,10 @@ def _regenerar() -> None:
          "decision": DECISIONES["frio_conversion"]},
         {"id": "trend", "tipo": "barras", "titulo": "Tendencias: vistas últimas 2 h vs 2 h previas",
          "pregunta": "¿Qué se está moviendo ahora mismo? (shop.events)",
-         "rows": [{"label": r["sub"], "a": r["n_reciente"], "b": r["n_antes"]} for r in datos["tendencias"]],
-         "opts": {"labelsLeft": 130, "colorA": "compra"},
-         "leyenda": "verde = vistas últimas 2 h · gris = 2 h previas · subcategorías con mayor ratio",
+         "rows": [{"label": r["sub"], "a": r["n_reciente"], "b": r["n_antes"],
+                   "ratio": r["ratio"]} for r in datos["tendencias"]],
+         "opts": {"labelsLeft": 130, "colorA": "compra", "segunda": "ratio"},
+         "leyenda": "verde = vistas últimas 2 h · gris = 2 h previas · número en ámbar = ratio reciente/antes",
          "decision": DECISIONES["tendencias"]},
         {"id": "cat", "tipo": "barras", "titulo": "La tienda se mueve (catalog_updates)",
          "pregunta": "¿Cuántas altas, roturas y cambios de precio hay?",
@@ -354,7 +360,7 @@ def _regenerar() -> None:
         "<div class='sub'>Un panel = una pregunta del reto → una decisión. Generado "
         + time.strftime("%H:%M:%S") + " (BCN, datos UTC) · <code>python -m src.panel_tukey</code></div></header><main>"
         + "".join("<div class='panel' id='p_%s'></div>" % p["id"] for p in paneles)
-        + "</main>" + _FOOT % {"version_desde": VERSION_DESDE}
+        + "</main>" + _FOOT
         + "<script>window.PANELS = " + json.dumps(paneles, default=str, ensure_ascii=False) + "</script>"
         + "<script>" + _JS + "</script></body></html>"
     )

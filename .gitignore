@@ -1,8 +1,8 @@
-# Claves: nunca se suben
+# keys, never committed
 .env
 *.key
 
-# Datos y salidas
+# data and outputs
 data/
 *.csv
 *.parquet
@@ -13,7 +13,7 @@ models/
 *.npy
 logs/
 
-# Entorno y cachés
+# env and caches
 .venv/
 venv/
 __pycache__/
@@ -21,9 +21,9 @@ __pycache__/
 .DS_Store
 .opencode/node_modules/
 
-# Personal de cada uno
+# personal stuff
 CLAUDE.local.md
 .claude/settings.local.json
 
-# Copias locales de páginas web (las diapositivas están resumidas en docs/opening.md)
+# local copies of web pages (the opening slides are summarised in docs/opening.md)
 *.html

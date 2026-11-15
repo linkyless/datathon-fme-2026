@@ -1,19 +1,19 @@
-"""La función que elige los 10 productos. Dueño: Ranking.
+"""The function that picks the 10 products. Owner: Ranking.
 
-    recommend(peticion, estado) -> lista de 10 product_id
+    recommend(request, state) -> list of 10 product_ids
 
-`peticion` es una fila de shop.requests como diccionario:
+`request` is a row of shop.requests as a dict:
     {"request_id", "ts", "user_id", "is_new_user", "context": {"device", "region", "page"},
      "recent_views": [{"product_id", "ts"}, ...]}
-En la evaluación offline llega una fila de shop.history_sessions con las mismas claves (puede faltar alguna:
-usa siempre .get()).
+In offline evaluation it gets a row of shop.history_sessions with the same keys (some may be missing: always use
+.get()).
 
-Reglas: NUNCA hace consultas a RawTree (solo lee `estado`), tarda < 5 ms y SIEMPRE devuelve 10 IDs distintos de
-`estado.disponibles`. Si una pieza del Estado está vacía, se salta y se usa la siguiente.
+Rules: it NEVER queries RawTree (it only reads `state`), takes < 5 ms and ALWAYS returns 10 distinct IDs from
+`state.available_ids`. If a piece of the State is empty, it's skipped and the next one is used.
 
-ESTADO: versión inicial que ya combina las piezas en cuanto existan. Mientras covisitas, comprados,
-populares_contexto y vecinos estén vacíos, se comporta como el baseline DE LAS DIAPOSITIVAS (más vendidos de la
-categoría de lo último visto) y, si no hay vistas, como el del starter (más vendidos de siempre).
+STATUS: first version that already combines the pieces as soon as they exist. While covisits, bought,
+popular_by_context and neighbours are empty, it behaves like the baseline FROM THE SLIDES (best sellers of the
+last viewed category) and, without views, like the starter's (all-time best sellers).
 """
 from __future__ import annotations
 
@@ -23,248 +23,248 @@ from itertools import chain
 
 import numpy as np
 
-from src import scoring as puntuacion, tree as arbol
-from src.state import Estado
+from src import scoring, tree
+from src.state import State
 
-NOMBRE = "e-samen-v1"
-"""Va en model_version, que SALE EN EL LEADERBOARD PÚBLICO: solo nombre en clave + versión (e-samen-v1, e-samen-v2...),
-nunca lo que hace (los demás equipos lo leerían). Qué es cada versión se apunta en docs/EXPERIMENTOS.md."""
+NAME = "e-samen-v1"
+"""Goes into model_version, which SHOWS UP ON THE PUBLIC LEADERBOARD: only a code name + version (e-samen-v1,
+e-samen-v2...), never what it does (other teams would read it). What each version is goes in docs/EXPERIMENTS.md."""
 
-DECAIMIENTO = 0.7
-"""Peso de cada vista hacia atrás: la última vale 1, la anterior 0.7, la otra 0.49..."""
+DECAY = 0.7
+"""Weight of each view going back: the last one is worth 1, the previous 0.7, the one before 0.49..."""
 
-REVISITAS = 0.0
-"""Cuánto empujamos los productos que el comprador YA ha visto en esta sesión (y no ha comprado). Es un
-multiplicador sobre la mejor puntuación de co-visitas: con 1.0, lo último que vio empata con el mejor candidato
-y lo anterior queda justo detrás; con 0 se apaga.
-APAGADO por defecto hasta que Evaluación lo mida (candidata a e-samen-v2: params={"revisitas": 0.3}).
-Chequeo de Leonardo (3.530 compras del carrusel tras el 2026-11-07): compras en nuestros 10 sin re-visitas
-14,76 %; con 0.1 -> 15,81 %; 0.3 -> 15,84 %; 1.0 -> 15,67 %.
-Motivo (medido en shop.history_sessions): un producto ya visto se compró en 1,96 de cada 100 huecos del carrusel
-antiguo frente a 0,12 los no vistos (sin corregir por posición)."""
+REVISITS = 0.0
+"""How much we push products the shopper ALREADY viewed in this session (and didn't buy). It's a multiplier on the
+best co-visit score: with 1.0 the last viewed ties with the best candidate and the previous one lands right behind;
+0 turns it off.
+OFF by default until Evaluation measures it (candidate for e-samen-v2: params={"revisits": 0.3}).
+Check on 3,530 carousel purchases after 2026-11-07: purchases inside our 10 without revisits 14.76 %; with 0.1 ->
+15.81 %; 0.3 -> 15.84 %; 1.0 -> 15.67 %.
+Why (measured on shop.history_sessions): an already viewed product got bought in 1.96 of every 100 slots of the old
+carousel vs 0.12 for unviewed ones (not corrected for position)."""
 
-AFIN_SUB = 0.0
-AFIN_MARCA = 0.0
-"""Afinidad fina: un candidato que comparte subcategoría con algo visto multiplica sus puntos por (1 + AFIN_SUB);
-si comparte marca, por (1 + AFIN_MARCA). APAGADOS por defecto hasta medirlos."""
+SUB_AFFINITY = 0.0
+BRAND_AFFINITY = 0.0
+"""Fine-grained affinity: a candidate sharing the subcategory with something viewed multiplies its points by
+(1 + SUB_AFFINITY); if it shares the brand, by (1 + BRAND_AFFINITY). OFF by default until measured."""
 
-NORMALIZAR_FILA = False
-"""Si True, los pesos de co-visita de cada producto visto se dividen por el mayor de su lista (el mejor vale 1).
-Así cada vista aporta en la misma escala y los vecinos por descripción (productos nuevos) se pueden mezclar."""
+NORMALIZE_ROW = False
+"""If True, the co-visit weights of each viewed product are divided by the top one in its list (the best is worth 1).
+That way every view contributes on the same scale and description neighbours (new products) can be mixed in."""
 
-PRECIO_COHERENTE = 0.0
-"""Si el precio del candidato está entre la mitad y el doble del precio medio de lo visto, sus puntos se
-multiplican por (1 + PRECIO_COHERENTE). APAGADO por defecto."""
+COHERENT_PRICE = 0.0
+"""If the candidate's price is between half and double the mean price of what was viewed, its points are multiplied
+by (1 + COHERENT_PRICE). OFF by default."""
 
-LAMBDA_PRECIO = 0.0
-"""Desempate por ingreso: puntos × (1 + LAMBDA_PRECIO · log(precio)). El desempate oficial es el ingreso esperado.
-El deep research propone 0.05-0.1. APAGADO por defecto."""
+PRICE_LAMBDA = 0.0
+"""Revenue tie-break: points * (1 + PRICE_LAMBDA * log(price)). The official tie-break is expected revenue.
+The deep research suggests 0.05-0.1. OFF by default."""
 
-TENDENCIA = 0.0
-"""R4. Exponente η del empujón por tendencia: puntos × lift^η, con lift de src/trends.py (1 = normal,
-3 = el triple de actividad que de costumbre en la última media hora). La investigación propone 0.3-0.5.
-Se aplica a los candidatos de co-visitas Y al orden de las listas de relleno (populares de la categoría y
-populares de siempre), que es lo que reciben la v0 y los compradores sin vistas. APAGADO por defecto.
-Chequeo de Leonardo en vivo (sáb ~17:00): los productos con lift >= 1.3 siguen la media hora SIGUIENTE a
-1,14× su ritmo normal (mediana; media 1,32) y los de lift < 0.8 a 0,84× (media 0,91): la tendencia se mantiene."""
+TREND = 0.0
+"""R4. Exponent eta of the trend push: points * lift^eta, with lift from src/trends.py (1 = normal, 3 = three times
+the usual activity in the last half hour). The research suggests 0.3-0.5.
+Applied to co-visit candidates AND to the order of the filler lists (category best sellers and all-time best
+sellers), which is what v0 and shoppers without views get. OFF by default.
+Live check (Sat ~17:00): products with lift >= 1.3 keep going in the NEXT half hour at 1.14x their normal pace
+(median; mean 1.32) and those with lift < 0.8 at 0.84x (mean 0.91): the trend holds."""
 
-RELLENO_REORDENADO = 30
-"""Con tendencia encendida, cuántos primeros puestos de cada lista de relleno se reordenan."""
+REORDERED_FILL = 30
+"""With trends on, how many top slots of each filler list get reordered."""
 
-CANDIDATOS_POR_FUENTE = 40
-"""R5. Con usar_modelo, cuántos candidatos se toman de cada fuente antes de que el modelo los ordene."""
+CANDIDATES_PER_SOURCE = 40
+"""R5. With use_model, how many candidates are taken from each source before the model ranks them."""
 
-FRIO_HISTORIAL = 0.0
-"""Frío con historial (idea de Artai, sáb ~18:00): a un comprador SIN vistas pero con compras previas, sembrar las
-co-visitas de lo que compró y empujar lo ya comprado (valor × el mejor candidato). APAGADO hasta medirlo.
-Lo medido en vivo (API del leaderboard, sáb 17:03-18:03): en fríos, C (sin filtro de comprados) 1,73 % frente a
-CF (con filtro) 1,41 % → la recompra parece ayudar un poco SOLO en fríos; pero M (lo comprado arriba para todos)
-0,47 % → empujarla fuerte hunde la conversión."""
+COLD_HISTORY = 0.0
+"""Cold with history (Sat ~18:00 idea): for a shopper WITHOUT views but with previous purchases, seed the co-visits of
+what they bought and push what was already bought (value x the best candidate). OFF until measured.
+Measured live (leaderboard API, Sat 17:03-18:03): on cold requests, C (no bought filter) 1.73 % vs CF (with filter)
+1.41 %, so repurchases seem to help a little ONLY on cold ones; but M (bought products on top for everybody)
+0.47 %, so pushing them hard sinks conversion."""
 
-PARAMS: dict = {"decaimiento": DECAIMIENTO, "revisitas": REVISITAS, "afin_sub": AFIN_SUB,
-                "afin_marca": AFIN_MARCA, "normalizar_fila": NORMALIZAR_FILA,
-                "precio_coherente": PRECIO_COHERENTE, "lambda_precio": LAMBDA_PRECIO,
-                "usar_vecinos": False, "usar_contexto": False, "tendencia": TENDENCIA,
-                "usar_modelo": False, "filtrar_comprados": True, "frio_historial": FRIO_HISTORIAL,
-                "usar_arbol": False}
-"""usar_arbol (R6): los 10 los elige el LightGBM de src/tree.py entre los productos de la categoría de lo último
-visto (sin vistas: los 300 mejores por calidad y popularidad). Necesita data/arbol.txt y data/arbol.json
-(python -m src.tree) y la librería lightgbm; si falta algo, se ignora y avisa en consola. APAGADO."""
-"""filtrar_comprados: quitar lo ya comprado. En vivo (API, 1 h, ~2.800 pet./brazo) CF (CON filtro) 1,06 % vs C
-(sin filtro) 1,02 %: en total, empate. Se deja encendido (lo que corre en vivo con más tráfico). OJO: CF = CON filtro."""
-"""usar_modelo (R5): los 10 los elige la regresión logística de src/scoring.py en vez de la suma de puntos.
-Necesita data/puntuacion.json (python -m src.scoring); si no existe, se ignora (y avisa en consola). Lo ya
-comprado no es candidato y, con filtrar_comprados, se quita (la primera versión lo ponía 1º: aprendió la recompra
-del historial, que en vivo no existe). APAGADO."""
-"""Parámetros por defecto. Las variantes A/B (src/service.py, Operador) pasan otro diccionario con las mismas
-claves: así se prueban variantes en vivo sin tocar este archivo. Cada clave nueva se añade aquí con su valor.
-usar_vecinos / usar_contexto: piezas de Artai (D3, D4). APAGADAS hasta que Evaluación o un A/B digan que suben:
-sin interruptor, un simple reinicio del servicio cambiaría el modelo en vivo sin medirlo."""
-
-
-def _todos(estado: Estado):
-    """Todos los disponibles en orden fijo. Es un generador: solo se ordena si de verdad se llega a usar
-    (casi nunca), porque ordenar 5.000 IDs era el 95 % del tiempo de recommend()."""
-    yield from sorted(estado.disponibles)
+PARAMS: dict = {"decay": DECAY, "revisits": REVISITS, "sub_affinity": SUB_AFFINITY,
+                "brand_affinity": BRAND_AFFINITY, "normalize_row": NORMALIZE_ROW,
+                "coherent_price": COHERENT_PRICE, "price_lambda": PRICE_LAMBDA,
+                "use_neighbours": False, "use_context": False, "trend": TREND,
+                "use_model": False, "filter_bought": True, "cold_history": COLD_HISTORY,
+                "use_tree": False}
+"""Default parameters. The A/B variants (src/service.py) pass another dict with the same keys: that way variants get
+tried live without touching this file. Every new key is added here with its value.
+- use_tree (R6): the 10 are picked by the LightGBM in src/tree.py among the products of the last viewed category
+  (no views: the 300 best by quality and popularity). Needs data/tree.txt and data/tree.json (python -m src.tree)
+  and lightgbm; if anything is missing it's ignored with a console warning. OFF.
+- filter_bought: drop what was already bought. Live (API, 1 h, ~2,800 requests/arm) CF (WITH filter) 1.06 % vs C
+  (no filter) 1.02 %: overall a tie. Left on (it's what ran live with the most traffic). Note: CF = WITH filter.
+- use_model (R5): the 10 are picked by the logistic regression in src/scoring.py instead of the sum of points.
+  Needs data/scoring.json (python -m src.scoring); if it's missing it's ignored (with a console warning). Already
+  bought products aren't candidates and, with filter_bought, get removed (the first version put them 1st: it learned
+  the history's repurchases, which don't exist live). OFF.
+- use_neighbours / use_context: cold-start pieces (D3, D4). OFF until Evaluation or an A/B says they help: without a
+  switch, a plain service restart would change the live model without measuring it."""
 
 
-def _precio(estado: Estado, pid: str) -> float:
+def _all(state: State):
+    """Every available product in a fixed order. It's a generator: it only gets sorted if it's actually reached
+    (almost never), because sorting 5,000 IDs was 95 % of recommend()'s time."""
+    yield from sorted(state.available_ids)
+
+
+def _price(state: State, pid: str) -> float:
     try:
-        return float(estado.catalogo.get(pid, {}).get("price_eur") or 0)
+        return float(state.catalog_info.get(pid, {}).get("price_eur") or 0)
     except (TypeError, ValueError):
         return 0.0
 
 
-def _por_tendencia(lista: list[str], lift: dict[str, float], eta: float) -> list[str]:
-    """Reordena los primeros RELLENO_REORDENADO de una lista de populares. Cada puesto vale 1/log2(puesto + 2)
-    (el 1º vale 1, el 2º 0,63, el 3º 0,5...) multiplicado por lift^η: un producto en plena subida adelanta unos
-    pocos puestos, pero uno normal no se hunde. El resto de la lista queda igual detrás."""
-    cabeza = lista[:RELLENO_REORDENADO]
-    puntos = {pid: lift.get(pid, 1.0) ** eta / math.log2(pos + 2) for pos, pid in enumerate(cabeza)}
-    return sorted(cabeza, key=puntos.__getitem__, reverse=True) + lista[RELLENO_REORDENADO:]
+def _by_trend(items_list: list[str], lift: dict[str, float], eta: float) -> list[str]:
+    """Reorders the first REORDERED_FILL of a best-seller list. Each slot is worth 1/log2(slot + 2) (1st = 1,
+    2nd = 0.63, 3rd = 0.5...) times lift^eta: a product on the rise moves up a few slots, but a normal one doesn't
+    sink. The rest of the list stays the same behind."""
+    head = items_list[:REORDERED_FILL]
+    points = {pid: lift.get(pid, 1.0) ** eta / math.log2(pos + 2) for pos, pid in enumerate(head)}
+    return sorted(head, key=points.__getitem__, reverse=True) + items_list[REORDERED_FILL:]
 
 
-def _con_modelo(peticion: dict, estado: Estado, vistos: list[str], puntos: Counter, lift: dict[str, float],
-                eta: float, vale) -> list[str] | None:
-    """R5. Junta candidatos (populares de su categoría, populares de siempre, co-visitas y lo que ha visto), los
-    puntúa con la regresión logística y devuelve los 10 mejores. `vale` = disponible (y no comprado si
-    filtrar_comprados). None si no hay modelo."""
-    modelo = puntuacion.modelo_guardado()
-    if modelo is None:
+def _with_model(request: dict, state: State, viewed: list[str], points: Counter, lift: dict[str, float],
+                eta: float, is_ok) -> list[str] | None:
+    """R5. Gathers candidates (their category's best sellers, all-time best sellers, co-visits and what they viewed),
+    scores them with the logistic regression and returns the best 10. `is_ok` = available (and not bought if
+    filter_bought). None if there's no model."""
+    model = scoring.saved_model()
+    if model is None:
         return None
-    n = CANDIDATOS_POR_FUENTE
-    ultima_categoria = str(estado.catalogo.get(vistos[-1], {}).get("category", "")) if vistos else ""
-    fuentes = (estado.populares_categoria.get(ultima_categoria, [])[:n], estado.populares[:n],
-               [pid for pid, _ in puntos.most_common(n)], list(reversed(vistos)))
-    candidatos = list(dict.fromkeys(pid for pid in chain(*fuentes) if vale(pid)))
-    if not candidatos:
+    n = CANDIDATES_PER_SOURCE
+    last_category = str(state.catalog_info.get(viewed[-1], {}).get("category", "")) if viewed else ""
+    sources = (state.popular_by_category.get(last_category, [])[:n], state.popular[:n],
+               [pid for pid, _ in points.most_common(n)], list(reversed(viewed)))
+    candidates = list(dict.fromkeys(pid for pid in chain(*sources) if is_ok(pid)))
+    if not candidates:
         return []
-    s = puntuacion.puntuar(peticion, candidatos, estado, modelo)
-    if eta > 0 and lift:  # tendencias: puntos × lift^η  ==  puntuación + η·log(lift)
-        s = s + eta * np.log([lift.get(pid, 1.0) for pid in candidatos])
-    return [candidatos[i] for i in np.argsort(-s, kind="stable")[:10]]
+    s = scoring.score_candidates(request, candidates, state, model)
+    if eta > 0 and lift:  # trends: points * lift^eta  ==  score + eta*log(lift)
+        s = s + eta * np.log([lift.get(pid, 1.0) for pid in candidates])
+    return [candidates[i] for i in np.argsort(-s, kind="stable")[:10]]
 
 
-def recommend(peticion: dict, estado: Estado, params: dict | None = None) -> list[str]:
+def recommend(request: dict, state: State, params: dict | None = None) -> list[str]:
     p = {**PARAMS, **(params or {})}
-    # filtrar_comprados (R2): quitar lo que ya compró. ENCENDIDO: los organizadores confirman que en vivo no hay
-    # recompras (el 61,6 % de recompras del historial es un artefacto) y en vivo CF (v0 + filtro) va por delante de C.
-    ya_comprado = (estado.comprados.get(str(peticion.get("user_id", "")), set())
-                   if p["filtrar_comprados"] else set())
+    # filter_bought (R2): drop what they already bought. ON: the organisers confirm there are no repurchases live
+    # (the history's 61.6 % repurchases is an artefact) and live CF (v0 + filter) is ahead of C.
+    already_bought = (state.bought.get(str(request.get("user_id", "")), set())
+                      if p["filter_bought"] else set())
 
-    def vale(pid: str) -> bool:
-        return pid in estado.disponibles and pid not in ya_comprado
+    def is_ok(pid: str) -> bool:
+        return pid in state.available_ids and pid not in already_bought
 
-    vistos = [v["product_id"] for v in (peticion.get("recent_views") or []) if v.get("product_id")]
-    puntos: Counter[str] = Counter()
+    viewed = [v["product_id"] for v in (request.get("recent_views") or []) if v.get("product_id")]
+    points: Counter[str] = Counter()
 
-    # 1) Co-visitas de lo que ha visto (lo más reciente pesa más).
-    for k, pid in enumerate(reversed(vistos)):
-        lista = estado.covisitas.get(pid, [])
-        escala = lista[0][1] if (p["normalizar_fila"] and lista and lista[0][1] > 0) else 1.0
-        for pos, (otro, peso) in enumerate(lista):
-            puntos[otro] += (p["decaimiento"] ** k) * (peso / escala) / (pos + 1)
+    # 1) co-visits of what they viewed (most recent weighs more)
+    for k, pid in enumerate(reversed(viewed)):
+        items_list = state.covisits.get(pid, [])
+        scale = items_list[0][1] if (p["normalize_row"] and items_list and items_list[0][1] > 0) else 1.0
+        for pos, (other, weight) in enumerate(items_list):
+            points[other] += (p["decay"] ** k) * (weight / scale) / (pos + 1)
 
-    # 1b) Comprador "frío" (sin vistas) pero con historial de compra: recomendarle lo que YA compró
-    #     (recompra, que el modelo oculto premia) y las co-visitas de sus productos comprados. Solo el
-    #     6,3 % de los compradores sin vistas son verdaderamente nuevos; para esos, esto no hace nada.
-    if p["frio_historial"] > 0 and not vistos:
-        comprados_u = sorted(estado.comprados.get(str(peticion.get("user_id", "")), set()))[:10]
-        for pid in comprados_u:
-            n_comprados = max(len(comprados_u), 1)
-            for pos, (otro, peso) in enumerate(estado.covisitas.get(pid, [])):
-                puntos[otro] += peso / ((pos + 1) * n_comprados)
-        if puntos:  # cada producto comprado se empuja 1,2× el mejor candidato sembrado: la recompra manda
-            tope = max(puntos.values())
-            for pid in comprados_u:
-                if pid in estado.disponibles:
-                    puntos[pid] += p["frio_historial"] * tope
+    # 1b) "cold" shopper (no views) but with a purchase history: recommend what they ALREADY bought (repurchase, which
+    #     the hidden model rewards) and the co-visits of their bought products. Only 6.3 % of shoppers without views
+    #     are truly new; for those this does nothing.
+    if p["cold_history"] > 0 and not viewed:
+        bought_u = sorted(state.bought.get(str(request.get("user_id", "")), set()))[:10]
+        for pid in bought_u:
+            n_bought = max(len(bought_u), 1)
+            for pos, (other, weight) in enumerate(state.covisits.get(pid, [])):
+                points[other] += weight / ((pos + 1) * n_bought)
+        if points:  # each bought product gets pushed 1.2x the best seeded candidate: repurchase rules
+            cap = max(points.values())
+            for pid in bought_u:
+                if pid in state.available_ids:
+                    points[pid] += p["cold_history"] * cap
 
-    # 2) Productos nuevos (sin co-visitas): usar los de descripción parecida.
-    for k, pid in enumerate(reversed(vistos) if p["usar_vecinos"] else []):
-        # "Nuevo" = no aparece en las co-visitas del historial. Si las co-visitas están vacías no sabemos qué es
-        # nuevo, así que no se usan vecinos (si no, se aplicarían a TODO y taparían el resto: medido por Alex).
-        if estado.covisitas and pid not in estado.covisitas:
-            for pos, otro in enumerate(estado.vecinos.get(pid, [])):
-                puntos[otro] += 0.5 * (p["decaimiento"] ** k) / (pos + 1)
+    # 2) new products (no co-visits): use the ones with a similar description
+    for k, pid in enumerate(reversed(viewed) if p["use_neighbours"] else []):
+        # "new" = not in the history's co-visits. If co-visits are empty we can't tell what's new, so neighbours
+        # aren't used (otherwise they'd apply to EVERYTHING and bury the rest: measured by Evaluation).
+        if state.covisits and pid not in state.covisits:
+            for pos, other in enumerate(state.neighbours.get(pid, [])):
+                points[other] += 0.5 * (p["decay"] ** k) / (pos + 1)
 
-    # 3) Afinidad fina: misma subcategoría o marca que algo de lo visto.
-    if (p["afin_sub"] > 0 or p["afin_marca"] > 0) and vistos:
-        subs = {estado.catalogo.get(v, {}).get("subcategory") for v in vistos} - {None, ""}
-        marcas = {estado.catalogo.get(v, {}).get("brand") for v in vistos} - {None, ""}
-        for pid in puntos:
-            datos = estado.catalogo.get(pid, {})
+    # 3) fine-grained affinity: same subcategory or brand as something viewed
+    if (p["sub_affinity"] > 0 or p["brand_affinity"] > 0) and viewed:
+        subs = {state.catalog_info.get(v, {}).get("subcategory") for v in viewed} - {None, ""}
+        brands = {state.catalog_info.get(v, {}).get("brand") for v in viewed} - {None, ""}
+        for pid in points:
+            payload = state.catalog_info.get(pid, {})
             factor = 1.0
-            if datos.get("subcategory") in subs:
-                factor += p["afin_sub"]
-            if datos.get("brand") in marcas:
-                factor += p["afin_marca"]
-            puntos[pid] *= factor
+            if payload.get("subcategory") in subs:
+                factor += p["sub_affinity"]
+            if payload.get("brand") in brands:
+                factor += p["brand_affinity"]
+            points[pid] *= factor
 
-    # 3b) Precio: coherente con lo visto y desempate por ingreso.
-    if (p["precio_coherente"] > 0 or p["lambda_precio"] > 0) and puntos:
-        precios_vistos = [_precio(estado, v) for v in vistos]
-        precios_vistos = [x for x in precios_vistos if x > 0]
-        medio = sum(precios_vistos) / len(precios_vistos) if precios_vistos else 0.0
-        for pid in puntos:
-            precio = _precio(estado, pid)
-            if precio <= 0:
+    # 3b) price: coherent with what was viewed, plus the revenue tie-break
+    if (p["coherent_price"] > 0 or p["price_lambda"] > 0) and points:
+        viewed_prices = [_price(state, v) for v in viewed]
+        viewed_prices = [x for x in viewed_prices if x > 0]
+        mid_price = sum(viewed_prices) / len(viewed_prices) if viewed_prices else 0.0
+        for pid in points:
+            price = _price(state, pid)
+            if price <= 0:
                 continue
-            if p["precio_coherente"] > 0 and medio > 0 and medio / 2 <= precio <= medio * 2:
-                puntos[pid] *= 1 + p["precio_coherente"]
-            if p["lambda_precio"] > 0:
-                puntos[pid] *= 1 + p["lambda_precio"] * math.log(max(precio, 1.0))
+            if p["coherent_price"] > 0 and mid_price > 0 and mid_price / 2 <= price <= mid_price * 2:
+                points[pid] *= 1 + p["coherent_price"]
+            if p["price_lambda"] > 0:
+                points[pid] *= 1 + p["price_lambda"] * math.log(max(price, 1.0))
 
-    # 3c) Tendencias (R4): lo que se está moviendo ahora sube; lo que se ha parado baja un poco.
-    #     `tendencias` lo rellena el servicio; con getattr funciona aunque el Estado aún no tenga el campo.
-    lift = getattr(estado, "tendencias", None) or {}
-    con_tendencia = p["tendencia"] > 0 and bool(lift)
-    if con_tendencia:
-        for pid in puntos:
-            puntos[pid] *= lift.get(pid, 1.0) ** p["tendencia"]
+    # 3c) trends (R4): what's moving now goes up; what has stopped goes down a bit.
+    #     `trends` is filled by the service; getattr makes it work even if the State doesn't have the field yet.
+    lift = getattr(state, "trends", None) or {}
+    with_trend = p["trend"] > 0 and bool(lift)
+    if with_trend:
+        for pid in points:
+            points[pid] *= lift.get(pid, 1.0) ** p["trend"]
 
-    # 4) Re-visitas: lo que ya ha mirado y no ha comprado. Cada producto cuenta una vez, por su vista más reciente.
-    if p["revisitas"] > 0 and vistos:
-        tope = max(puntos.values(), default=1.0)
-        contados: set[str] = set()
-        for k, pid in enumerate(reversed(vistos)):
-            if pid not in contados:
-                contados.add(pid)
-                puntos[pid] += p["revisitas"] * (p["decaimiento"] ** k) * tope
+    # 4) revisits: what they already looked at and didn't buy. Each product counts once, by its most recent view.
+    if p["revisits"] > 0 and viewed:
+        cap = max(points.values(), default=1.0)
+        counted: set[str] = set()
+        for k, pid in enumerate(reversed(viewed)):
+            if pid not in counted:
+                counted.add(pid)
+                points[pid] += p["revisits"] * (p["decay"] ** k) * cap
 
-    elegidos = None
-    if p["usar_arbol"] and (modelo_arbol := arbol.modelo_guardado()) is not None:
-        cand = arbol.candidatos(peticion, estado, modelo_arbol, vale)
+    chosen = None
+    if p["use_tree"] and (tree_model := tree.saved_model()) is not None:
+        cand = tree.candidates(request, state, tree_model, is_ok)
         if cand:
-            s = arbol.puntuar(peticion, cand, estado, modelo_arbol)
-            elegidos = [cand[i] for i in np.argsort(-s, kind="stable")[:10]]
-    if elegidos is None and p["usar_modelo"]:
-        elegidos = _con_modelo(peticion, estado, vistos, puntos, lift, p["tendencia"], vale)
-    if elegidos is None:
-        elegidos = [pid for pid, _ in puntos.most_common() if vale(pid)][:10]
+            s = tree.score_candidates(request, cand, state, tree_model)
+            chosen = [cand[i] for i in np.argsort(-s, kind="stable")[:10]]
+    if chosen is None and p["use_model"]:
+        chosen = _with_model(request, state, viewed, points, lift, p["trend"], is_ok)
+    if chosen is None:
+        chosen = [pid for pid, _ in points.most_common() if is_ok(pid)][:10]
 
-    # 5) Relleno, en este orden: más vendidos de la categoría de lo último que vio (el baseline de las
-    #    diapositivas), populares de su tipo de comprador, populares de siempre y cualquiera disponible.
-    #    (Se asume que recent_views va de más antiguo a más reciente, como en el cuaderno oficial.)
-    ultima_categoria = str(estado.catalogo.get(vistos[-1], {}).get("category", "")) if vistos else ""
-    de_su_categoria = estado.populares_categoria.get(ultima_categoria, [])
-    ctx = peticion.get("context") or {}
-    por_contexto = (estado.populares_contexto.get((str(ctx.get("device", "")), str(ctx.get("region", ""))), [])
-                    if p["usar_contexto"] else [])
-    populares = estado.populares
-    if con_tendencia:
-        de_su_categoria = _por_tendencia(de_su_categoria, lift, p["tendencia"])
-        populares = _por_tendencia(populares, lift, p["tendencia"])
-    for fuente in (de_su_categoria, por_contexto, populares, _todos(estado)):
-        for pid in fuente:
-            if len(elegidos) == 10:
-                return elegidos
-            if pid not in elegidos and vale(pid):
-                elegidos.append(pid)
-    # Si incluso así faltan (el usuario lo compró casi todo), relajar la regla de "ya comprado".
-    for pid in chain(estado.populares, _todos(estado)):
-        if len(elegidos) == 10:
+    # 5) filler, in this order: best sellers of the last viewed category (the baseline from the slides), best sellers
+    #    for their kind of shopper, all-time best sellers and anything available.
+    #    (recent_views is assumed to go from oldest to newest, as in the official notebook.)
+    last_category = str(state.catalog_info.get(viewed[-1], {}).get("category", "")) if viewed else ""
+    from_their_category = state.popular_by_category.get(last_category, [])
+    ctx = request.get("context") or {}
+    by_context = (state.popular_by_context.get((str(ctx.get("device", "")), str(ctx.get("region", ""))), [])
+                  if p["use_context"] else [])
+    popular = state.popular
+    if with_trend:
+        from_their_category = _by_trend(from_their_category, lift, p["trend"])
+        popular = _by_trend(popular, lift, p["trend"])
+    for source in (from_their_category, by_context, popular, _all(state)):
+        for pid in source:
+            if len(chosen) == 10:
+                return chosen
+            if pid not in chosen and is_ok(pid):
+                chosen.append(pid)
+    # if there still aren't enough (the user bought almost everything), relax the "already bought" rule
+    for pid in chain(state.popular, _all(state)):
+        if len(chosen) == 10:
             break
-        if pid not in elegidos and pid in estado.disponibles:
-            elegidos.append(pid)
-    return elegidos
+        if pid not in chosen and pid in state.available_ids:
+            chosen.append(pid)
+    return chosen

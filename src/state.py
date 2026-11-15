@@ -1,91 +1,90 @@
-"""EL CONTRATO del equipo. Dueño: Operador. Si cambias un campo, avisa a los cuatro.
+"""The team CONTRACT. Owner: Operator. If you change a field, tell all four of us.
 
-`Estado` es todo lo que `ranking.recommend()` puede usar para decidir. Se calcula FUERA del bucle en vivo
-(consultas pesadas), se guarda en memoria y se refresca cada cierto tiempo. Dentro de `recommend()` no se
-hace ninguna consulta: solo se leen estos campos.
+`State` is everything `ranking.recommend()` can use to decide. It's computed OUTSIDE the live loop (heavy queries),
+kept in memory and refreshed every so often. `recommend()` never runs a query: it only reads these fields.
 
-Cada campo tiene un dueño que escribe la función que lo rellena, siempre con la misma forma:
-`cargar_xxx(hasta: str | None) -> valor`. `hasta` ('YYYY-MM-DD') corta los datos en esa fecha para la
-evaluación offline (así no se hace trampa mirando el futuro). En vivo se llama con `hasta=None`.
+Each field has an owner who writes the function that fills it, always with the same shape:
+`load_xxx(until: str | None) -> value`. `until` ('YYYY-MM-DD') cuts the data at that date for offline evaluation
+(so we never cheat by looking at the future). Live it's called with `until=None`.
 
-Mientras una función no esté hecha devuelve un valor vacío y `recommend()` sigue funcionando con lo demás.
+Until a function is written it returns an empty value and `recommend()` keeps working with the rest.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from src import catalog, coldstart, covisits as covisitas, trends as tendencias, users as usuarios
+from src import catalog, coldstart, covisits, trends, users
 
 
 @dataclass
-class Estado:
-    # --- Operador (src/catalog.py) ---
-    catalogo: dict[str, dict] = field(default_factory=dict)
+class State:
+    # --- Operator (src/catalog.py) ---
+    catalog_info: dict[str, dict] = field(default_factory=dict)
     """product_id -> {"category", "subcategory", "brand", "price_eur", "is_active", ...}"""
-    disponibles: set[str] = field(default_factory=set)
-    """Productos que se pueden recomendar AHORA (activos y en stock). Recomendar otro invalida la respuesta."""
-    populares: list[str] = field(default_factory=list)
-    """Más vendidos de siempre, de más a menos. Es el fallback oficial y el relleno de emergencia."""
-    populares_categoria: dict[str, list[str]] = field(default_factory=dict)
-    """category -> más vendidos de esa categoría. Es el baseline de las diapositivas (docs/apertura.md).
-    Se calcula a partir de `catalogo` y `populares` (sin consultas): ver `por_categoria()`."""
+    available_ids: set[str] = field(default_factory=set)
+    """Products that can be recommended RIGHT NOW (active and in stock). Recommending anything else voids the answer."""
+    popular: list[str] = field(default_factory=list)
+    """All-time best sellers, most to least. It's the official fallback and the emergency filler."""
+    popular_by_category: dict[str, list[str]] = field(default_factory=dict)
+    """category -> best sellers of that category. It's the baseline from the opening slides (docs/opening.md).
+    Computed from `catalog_info` and `popular` (no queries): see `by_category()`."""
 
     # --- Ranking (src/covisits.py, src/users.py) ---
-    covisitas: dict[str, list[tuple[str, float]]] = field(default_factory=dict)
-    """product_id -> [(otro_product_id, peso), ...] de mayor a menor peso. "Quien vio X vio/compró Y"."""
-    comprados: dict[str, set[str]] = field(default_factory=dict)
-    """user_id -> productos que ya compró (no se los volvemos a enseñar)."""
-    categorias_usuario: dict[str, list[str]] = field(default_factory=dict)
-    """user_id -> sus 3 categorías con más actividad (vistas + carrito + compras), de más a menos (src/choice.py).
-    Para el comprador SIN vistas: enseñarle su categoría favorita convierte ~8× más (0,78 % frente a 0,09 %)."""
-    tendencias: dict[str, float] = field(default_factory=dict)
-    """product_id -> lift (src/trends.py): >1 = más actividad que de costumbre en la última media hora."""
+    covisits: dict[str, list[tuple[str, float]]] = field(default_factory=dict)
+    """product_id -> [(other_product_id, weight), ...] highest weight first. "Whoever viewed X viewed/bought Y"."""
+    bought: dict[str, set[str]] = field(default_factory=dict)
+    """user_id -> products they already bought (we don't show them again)."""
+    user_categories: dict[str, list[str]] = field(default_factory=dict)
+    """user_id -> their 3 most active categories (views + cart + purchases), most to least (src/choice.py).
+    For a shopper WITHOUT views, showing their favourite category converts ~8x more (0.78 % vs 0.09 %)."""
+    trends: dict[str, float] = field(default_factory=dict)
+    """product_id -> lift (src/trends.py): >1 = more activity than usual in the last half hour."""
 
-    # --- Datos y relato (src/coldstart.py) ---
-    populares_contexto: dict[tuple[str, str], list[str]] = field(default_factory=dict)
-    """(device, region) -> más vendidos para ese tipo de comprador. Para usuarios nuevos."""
-    vecinos: dict[str, list[str]] = field(default_factory=dict)
-    """product_id -> productos con descripción parecida (embeddings). Para productos nuevos."""
-    perfiles_comprador: dict[str, dict] = field(default_factory=dict)
-    """user_id -> {"categorias", "subcategorias", "marcas", "precio_mediano", "compras"}: perfil de R6
-    (lo rellena coldstart.cargar_perfiles desde team_29.scratch; construir_perfiles lo sube)."""
-    perfiles_producto: dict[str, dict] = field(default_factory=dict)
-    """product_id -> {"ensenado", "comprado", "tasa_ips"}: tasa de compra corregida por propensity (R6)."""
-
-
-def por_categoria(cat: dict[str, dict], populares: list[str]) -> dict[str, list[str]]:
-    """Reparte la lista de populares por categoría, conservando el orden."""
-    salida: dict[str, list[str]] = {}
-    for pid in populares:
-        categoria = cat.get(pid, {}).get("category")
-        if categoria:
-            salida.setdefault(str(categoria), []).append(pid)
-    return salida
+    # --- Data (src/coldstart.py) ---
+    popular_by_context: dict[tuple[str, str], list[str]] = field(default_factory=dict)
+    """(device, region) -> best sellers for that kind of shopper. For new users."""
+    neighbours: dict[str, list[str]] = field(default_factory=dict)
+    """product_id -> products with a similar description (embeddings). For new products."""
+    shopper_profiles: dict[str, dict] = field(default_factory=dict)
+    """user_id -> {"categories", "subcategories", "brands", "median_price", "purchases"}: R6 profile
+    (filled by coldstart.load_profiles from team_29.scratch; build_profiles uploads it)."""
+    product_profiles: dict[str, dict] = field(default_factory=dict)
+    """product_id -> {"shown_n", "was_bought", "ips_rate"}: purchase rate corrected by propensity (R6)."""
 
 
-def construir(hasta: str | None = None) -> Estado:
-    """Calcula el Estado completo. Offline: hasta='YYYY-MM-DD'. En vivo: hasta=None.
+def by_category(cat: dict[str, dict], popular: list[str]) -> dict[str, list[str]]:
+    """Splits the popular list by category, keeping the order."""
+    out: dict[str, list[str]] = {}
+    for pid in popular:
+        category = cat.get(pid, {}).get("category")
+        if category:
+            out.setdefault(str(category), []).append(pid)
+    return out
 
-    Los perfiles de R6 vienen de team_29.scratch; si el corte no está construido ahí,
-    ejecuta antes `python -m src.coldstart` (en vivo) o `construir_perfiles(hasta)` (offline).
+
+def build(until: str | None = None) -> State:
+    """Computes the whole State. Offline: until='YYYY-MM-DD'. Live: until=None.
+
+    R6 profiles come from team_29.scratch; if that cutoff isn't built there yet,
+    run `python -m src.coldstart` first (live) or `build_profiles(until)` (offline).
     """
-    cat = catalog.load_catalog(hasta)
-    pop = catalog.load_popular(hasta)
-    perfiles_comprador, perfiles_producto = coldstart.cargar_perfiles(hasta)
-    if not perfiles_comprador and not perfiles_producto:
-        # este corte no está construido en scratch: se construye AHORA con el mismo corte
-        # (respeta `hasta`, no mira el futuro) y se recarga; solo pasa la primera vez.
-        perfiles_comprador, perfiles_producto = coldstart.construir_perfiles(hasta)
-    return Estado(
-        catalogo=cat,
-        disponibles=catalog.available(cat),
-        populares=pop,
-        populares_categoria=por_categoria(cat, pop),
-        covisitas=covisitas.cargar_covisitas(hasta),
-        comprados=usuarios.cargar_comprados(hasta),
-        tendencias=tendencias.cargar_tendencias(hasta),
-        populares_contexto=coldstart.cargar_populares_contexto(hasta),
-        vecinos=coldstart.cargar_vecinos(hasta),
-        perfiles_comprador=perfiles_comprador,
-        perfiles_producto=perfiles_producto,
+    cat = catalog.load_catalog(until)
+    pop = catalog.load_popular(until)
+    shopper_profiles, product_profiles = coldstart.load_profiles(until)
+    if not shopper_profiles and not product_profiles:
+        # this cutoff isn't in scratch yet: build it NOW with the same cutoff
+        # (respects `until`, never looks at the future) and reload; only happens the first time.
+        shopper_profiles, product_profiles = coldstart.build_profiles(until)
+    return State(
+        catalog_info=cat,
+        available_ids=catalog.available(cat),
+        popular=pop,
+        popular_by_category=by_category(cat, pop),
+        covisits=covisits.load_covisits(until),
+        bought=users.load_bought(until),
+        trends=trends.load_trends(until),
+        popular_by_context=coldstart.load_context_popular(until),
+        neighbours=coldstart.load_neighbours(until),
+        shopper_profiles=shopper_profiles,
+        product_profiles=product_profiles,
     )

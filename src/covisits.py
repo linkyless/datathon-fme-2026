@@ -1,14 +1,14 @@
-"""Co-visitas: "quien vio X vio/compró también Y". Dueño: Ranking.
+"""Co-visitation: "whoever viewed X also viewed/bought Y". Owner: Ranking.
 
-Idea (como en OTTO, docs/investigacion.md punto 5): dos productos están relacionados si aparecen en la misma
-sesión. Para el par (X -> Y) sumamos, por cada sesión donde salen los dos, un peso según lo que el comprador
-hizo con Y: solo verlo 1, añadirlo al carrito 6, comprarlo 3. Se puede dividir por la popularidad de Y elevada
-a EXPONENTE_POPULARIDAD para que lo que sale en todas partes no gane siempre (ver abajo por qué está a 0).
+Idea (as in OTTO, docs/research.md point 5): two products are related if they show up in the same session. For the
+pair (X -> Y) we add, for every session where both appear, a weight based on what the shopper did with Y: just viewed
+it 1, added it to the cart 6, bought it 3. It can be divided by Y's popularity raised to POPULARITY_EXPONENT so that
+what shows up everywhere doesn't always win (see below why it's at 0).
 
-Detalles medidos el sáb 14/11:
-- Cada sesión cuenta UNA vez por par (si vio Y tres veces no suma tres): se usa el mayor peso de Y en la sesión.
-- "Solo pares a menos de 24 h": la sesión más larga de shop.history_events dura 954 s, así que se cumple
-  siempre y no hace falta filtrarlo en la consulta.
+Details measured on Sat 14/11:
+- Each session counts ONCE per pair (viewing Y three times doesn't add three): Y's highest weight in the session is used.
+- "Only pairs less than 24 h apart": the longest session in shop.history_events lasts 954 s, so it always holds and
+  there's no need to filter it in the query.
 """
 from __future__ import annotations
 
@@ -18,79 +18,79 @@ from pathlib import Path
 
 from src.rawtree import query
 
-VECINOS = 20
-"""Cuántos productos relacionados guardamos por producto."""
+NEIGHBOURS = 20
+"""How many related products we keep per product."""
 
-PESO_VISTA, PESO_CARRITO, PESO_COMPRA = 1, 6, 3
-EXPONENTE_POPULARIDAD = 0.0
-"""0 = sin dividir por popularidad. El deep research proponía 0.5, pero sobre las 3.530 compras del carrusel
-posteriores al 2026-11-07 (chequeo de Leonardo, sáb 14/11) las compras dentro de nuestros 10 fueron: exponente 0
--> 14,76 %, 0.25 -> 12,83 %, 0.5 -> 11,47 % (con IPS: 2,18 / 2,05 / 1,89). Al modelo oculto le gusta lo popular."""
+VIEW_WEIGHT, CART_WEIGHT, PURCHASE_WEIGHT = 1, 6, 3
+POPULARITY_EXPONENT = 0.0
+"""0 = no division by popularity. The deep research suggested 0.5, but on the 3,530 carousel purchases after
+2026-11-07 (checked on Sat 14/11) the share of purchases inside our 10 was: exponent 0 -> 14.76 %, 0.25 -> 12.83 %,
+0.5 -> 11.47 % (with IPS: 2.18 / 2.05 / 1.89). The hidden model likes popular stuff."""
 
 _DATA = Path(__file__).resolve().parent.parent / "data"
 
-# `sp` = una fila por (sesión, producto) con el mayor peso que tuvo ese producto en esa sesión.
-# Después se cruza `sp` consigo misma por sesión para sacar los pares, y con `pop` (en cuántas sesiones sale
-# cada producto) para normalizar.
+# `sp` = one row per (session, product) with the highest weight that product had in that session.
+# Then `sp` is joined with itself by session to get the pairs, and with `pop` (in how many sessions each product
+# shows up) to normalise.
 _SQL = """
 WITH sp AS (
     SELECT session_id::String AS s, product_id::String AS p,
-           max(multiIf(event_type::String = 'add_to_cart', {carrito},
-                       event_type::String = 'purchase', {compra}, {vista})) AS w
+           max(multiIf(event_type::String = 'add_to_cart', {cart},
+                       event_type::String = 'purchase', {purchase}, {view})) AS w
     FROM shop.history_events
-    {filtro}
+    {where_extra}
     GROUP BY s, p
 )
-SELECT pares.p AS p, pares.q AS q, pares.bruto / pow(pop.sesiones, {exponente}) AS peso
+SELECT pairs.p AS p, pairs.q AS q, pairs.raw / pow(pop.sessions, {exponent}) AS weight
 FROM (
-    SELECT a.p AS p, b.p AS q, sum(b.w) AS bruto
+    SELECT a.p AS p, b.p AS q, sum(b.w) AS raw
     FROM sp AS a INNER JOIN sp AS b ON a.s = b.s
     WHERE a.p != b.p
     GROUP BY p, q
-) AS pares
-INNER JOIN (SELECT p, count() AS sesiones FROM sp GROUP BY p) AS pop ON pares.q = pop.p
-ORDER BY peso DESC
-LIMIT {vecinos} BY p"""
+) AS pairs
+INNER JOIN (SELECT p, count() AS sessions FROM sp GROUP BY p) AS pop ON pairs.q = pop.p
+ORDER BY weight DESC
+LIMIT {neighbours} BY p"""
 
 
-def _archivo(hasta: str | None) -> Path:
-    """Nombre del cache, con FIRMA de todos los parámetros que cambian el resultado.
+def _cache_file(until: str | None) -> Path:
+    """Cache file name, with a SIGNATURE of every parameter that changes the result.
 
-    Si cambian los pesos, VECINOS o el exponente, el nombre cambia y el cache viejo
-    se ignora automáticamente (antes solo dependía de `hasta` y el exponente: un cambio
-    de pesos dejaba el servicio leyendo co-visitas viejas sin darse cuenta).
+    If the weights, NEIGHBOURS or the exponent change, the name changes and the old cache is ignored automatically
+    (it used to depend only on `until` and the exponent: changing the weights left the service reading stale
+    co-visits without noticing).
     """
-    firma = (f"exp{EXPONENTE_POPULARIDAD:g}_v{VECINOS}"
-             f"_pesos{PESO_VISTA}-{PESO_CARRITO}-{PESO_COMPRA}")
-    return _DATA / f"covisitas_{hasta or 'todo'}_{firma}.json"
+    signature = (f"exp{POPULARITY_EXPONENT:g}_v{NEIGHBOURS}"
+                 f"_weights{VIEW_WEIGHT}-{CART_WEIGHT}-{PURCHASE_WEIGHT}")
+    return _DATA / f"covisits_{until or 'all'}_{signature}.json"
 
 
-def _consultar(hasta: str | None) -> dict[str, list[tuple[str, float]]]:
-    filtro = f"WHERE ts::DateTime64(3) < '{hasta}'" if hasta else ""
-    sql = _SQL.format(filtro=filtro, vecinos=VECINOS, exponente=EXPONENTE_POPULARIDAD,
-                      vista=PESO_VISTA, carrito=PESO_CARRITO, compra=PESO_COMPRA)
-    salida: dict[str, list[tuple[str, float]]] = {}
-    for fila in query(sql, timeout=600):  # llegan ordenadas de mayor a menor peso
-        salida.setdefault(fila["p"], []).append((fila["q"], float(fila["peso"])))
-    return salida
+def _run_query(until: str | None) -> dict[str, list[tuple[str, float]]]:
+    where_extra = f"WHERE ts::DateTime64(3) < '{until}'" if until else ""
+    sql = _SQL.format(where_extra=where_extra, neighbours=NEIGHBOURS, exponent=POPULARITY_EXPONENT,
+                      view=VIEW_WEIGHT, cart=CART_WEIGHT, purchase=PURCHASE_WEIGHT)
+    out: dict[str, list[tuple[str, float]]] = {}
+    for row in query(sql, timeout=600):  # they come sorted by weight, highest first
+        out.setdefault(row["p"], []).append((row["q"], float(row["weight"])))
+    return out
 
 
-def cargar_covisitas(hasta: str | None = None) -> dict[str, list[tuple[str, float]]]:
-    """product_id -> [(otro_product_id, peso), ...] ordenado de mayor a menor peso (máx. VECINOS por producto).
+def load_covisits(until: str | None = None) -> dict[str, list[tuple[str, float]]]:
+    """product_id -> [(other_product_id, weight), ...] highest weight first (at most NEIGHBOURS per product).
 
-    `hasta` ('YYYY-MM-DD'): usar solo eventos con ts < hasta. None = todo (en vivo).
-    La consulta es pesada: el resultado se guarda en data/covisitas_...json y se reutiliza.
-    El nombre del archivo incluye los parámetros (pesos, vecinos, exponente): cambiarlos
-    invalida el cache solo. Para recalcular con los mismos parámetros, borra ese archivo.
+    `until` ('YYYY-MM-DD'): only use events with ts < until. None = everything (live).
+    The query is heavy: the result is saved to data/covisits_...json and reused.
+    The file name includes the parameters (weights, neighbours, exponent), so changing them invalidates the cache on
+    its own. To recompute with the same parameters, delete that file.
     """
-    if hasta is not None and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", hasta):
-        raise ValueError(f"hasta debe ser 'YYYY-MM-DD', no {hasta!r}")
-    archivo = _archivo(hasta)
-    if archivo.exists():
-        guardado = json.loads(archivo.read_text(encoding="utf-8"))
-        return {p: [(q, float(w)) for q, w in lista] for p, lista in guardado.items()}
-    covisitas = _consultar(hasta)
-    if covisitas:  # no guardar un resultado vacío: sería un fallo, no un dato
+    if until is not None and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", until):
+        raise ValueError(f"until must be 'YYYY-MM-DD', not {until!r}")
+    cache_file = _cache_file(until)
+    if cache_file.exists():
+        saved = json.loads(cache_file.read_text(encoding="utf-8"))
+        return {p: [(q, float(w)) for q, w in items_list] for p, items_list in saved.items()}
+    covisits = _run_query(until)
+    if covisits:  # don't save an empty result: that'd be a failure, not data
         _DATA.mkdir(exist_ok=True)
-        archivo.write_text(json.dumps(covisitas), encoding="utf-8")
-    return covisitas
+        cache_file.write_text(json.dumps(covisits), encoding="utf-8")
+    return covisits

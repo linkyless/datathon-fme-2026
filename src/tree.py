@@ -1,21 +1,21 @@
-"""R6 · El "modelo grande": LightGBM (árboles) entrenado como ELECCIÓN dentro del carrusel. Dueño: Ranking.
+"""R6: the "big model", LightGBM (trees) trained as a CHOICE within the carousel. Owner: Ranking.
 
-    python -m src.tree      # entrena, valida (acierto del 1.º) y guarda data/arbol.txt + data/arbol.json
+    python -m src.tree      # trains, validates (top-1 hit) and saves data/tree.txt + data/tree.json
 
-La idea, para un product manager:
-- Igual que e-samen-v2 (src/choice.py): en cada visita con compra el carrusel antiguo enseñó 10 productos y el
-  comprador eligió uno. El modelo aprende qué hace que un producto GANE a sus 9 vecinos de carrusel. Comparar solo
-  dentro de lo enseñado evita el sesgo del carrusel antiguo (enseñaba lo popular).
-- Diferencia con la v2: en vez de una neurona (cada señal suma por su cuenta), cientos de árboles pequeños que
-  aprenden COMBINACIONES ("más barato que lo visto, pero solo si es de su subcategoría habitual").
-  LightGBM lo hace con el objetivo "lambdarank": cada visita es un grupo de 10 y el comprado debe quedar 1.º.
-- El carrusel antiguo enseñaba siempre 10 de la MISMA categoría que lo último visto: el árbol no puede aprender
-  "misma categoría". Por eso, al recomendar, los candidatos salen de esa categoría (como en la v2).
-- Las recompras se quitan (en vivo no existen: aviso de los organizadores).
-- Sin mirar el futuro: perfiles y co-visitas de las filas de entrenamiento se calculan con datos anteriores a
-  INICIO_ENTRENO; los del test, con datos anteriores a CORTE. La calidad se calcula como en la v2.
-- La posición entra como señal al entrenar (lo de arriba se compra más solo por estar arriba); al recomendar
-  todos los candidatos llevan puesto 1, así compiten por lo que son.
+The idea, for a product manager:
+- Same as e-samen-v2 (src/choice.py): on every visit with a purchase the old carousel showed 10 products and the
+  shopper picked one. The model learns what makes a product BEAT its 9 carousel neighbours. Comparing only within
+  what was shown avoids the old carousel's bias (it showed popular stuff).
+- Difference with v2: instead of one neuron (each signal adds up on its own), hundreds of small trees that learn
+  COMBINATIONS ("cheaper than what was viewed, but only if it's in their usual subcategory").
+  LightGBM does it with the "lambdarank" objective: each visit is a group of 10 and the bought one should come 1st.
+- The old carousel always showed 10 from the SAME category as the last viewed product: the tree can't learn
+  "same category". So when recommending, candidates come from that category (as in v2).
+- Repurchases are removed (they don't exist live: organisers' note).
+- No looking at the future: profiles and co-visits for the training rows are computed with data before TRAIN_START;
+  the test ones with data before CUTOFF. Quality is computed as in v2.
+- Position goes in as a signal when training (what's on top sells more just for being on top); when recommending
+  every candidate gets slot 1, so they compete on what they are.
 """
 from __future__ import annotations
 
@@ -29,369 +29,369 @@ from pathlib import Path
 import numpy as np
 
 DATA = Path(__file__).resolve().parent.parent / "data"
-CORTE = "2026-11-07"
-INICIO_ENTRENO = "2026-10-01"
-INICIO_PARADA = "2026-10-31"
-"""La última semana del entrenamiento sirve para decidir cuántos árboles usar (parada temprana)."""
-SUAVIZADO = 5.0
-DECAIMIENTO = 0.7
+CUTOFF = "2026-11-07"
+TRAIN_START = "2026-10-01"
+OUTAGE_START = "2026-10-31"
+"""The last week of training is used to decide how many trees to keep (early stopping)."""
+SMOOTHING = 5.0
+DECAY = 0.7
 PARAMS_LGB = {"objective": "lambdarank", "learning_rate": 0.05, "num_leaves": 15, "min_child_samples": 50,
               "subsample": 0.8, "subsample_freq": 1, "colsample_bytree": 0.8, "reg_lambda": 1.0,
               "lambdarank_truncation_level": 10, "verbose": -1, "seed": 29}
-"""Árboles pequeños (15 hojas) y aprendizaje lento: con ~10.000 compras, árboles grandes memorizarían."""
-MAX_ARBOLES = 1000
-N_FRIO = 300
-"""Comprador sin vistas: se puntúan los N_FRIO mejores productos por calidad y popularidad."""
+"""Small trees (15 leaves) and slow learning: with ~10,000 purchases, big trees would memorise."""
+MAX_TREES = 1000
+N_COLD = 300
+"""Shopper without views: the N_COLD best products by quality and popularity get scored."""
 
-SENALES = [
-    ("log_calidad", "compras / compras esperadas por sus posiciones (suavizado hacia lo típico)"),
-    ("popularidad", "-log(1 + puesto en compradores distintos)"),
-    ("misma_subcategoria", "misma subcategoría que lo último visto"),
-    ("misma_marca", "misma marca que lo último visto"),
-    ("sub_en_vistas", "su subcategoría aparece en lo visto"),
-    ("log_ratio_precio", "log(precio / precio de lo último visto)"),
-    ("log_precio", "log(precio)"),
-    ("revisita", "ya lo ha visto en esta sesión"),
-    ("frio", "el comprador no tiene vistas"),
-    ("covisita", "log(1 + puntos de co-visita con lo visto)"),
-    ("sub_en_perfil", "su subcategoría está en las 3 que más compra el comprador"),
-    ("marca_en_perfil", "su marca está en las 3 que más compra el comprador"),
-    ("cat_en_perfil", "su categoría está en las 3 que más compra el comprador"),
-    ("log_ratio_precio_habitual", "log(precio / precio mediano de lo que compra el comprador)"),
-    ("log_compras_comprador", "log(1 + compras del comprador)"),
-    ("tasa_ips", "tasa de compra del producto cuando se enseñaba, corregida por propensity (perfil de Artai)"),
-    ("movil", "entra desde ios/android"),
-    ("ficha", "está en la ficha de un producto (page = product)"),
-    ("puesto", "puesto en el carrusel (al recomendar, siempre 1)"),
+SIGNALS = [
+    ("log_quality", "purchases / purchases expected from its slots (smoothed towards typical)"),
+    ("popularity", "-log(1 + rank by distinct buyers)"),
+    ("same_subcategory", "same subcategory as the last viewed"),
+    ("same_brand", "same brand as the last viewed"),
+    ("sub_in_views", "its subcategory appears in what was viewed"),
+    ("log_price_ratio", "log(price / price of the last viewed)"),
+    ("log_price", "log(price)"),
+    ("revisit", "already viewed in this session"),
+    ("cold", "the shopper has no views"),
+    ("covisit", "log(1 + co-visit points with what was viewed)"),
+    ("sub_in_profile", "its subcategory is among the shopper's top 3"),
+    ("brand_in_profile", "its brand is among the shopper's top 3"),
+    ("cat_in_profile", "its category is among the shopper's top 3"),
+    ("log_price_ratio_usual", "log(price / median price of what the shopper buys)"),
+    ("log_shopper_purchases", "log(1 + shopper's purchases)"),
+    ("ips_rate", "product's purchase rate when shown, corrected by propensity (product profile)"),
+    ("mobile", "comes from ios/android"),
+    ("card", "on a product page (page = product)"),
+    ("slot", "carousel slot (always 1 when recommending)"),
 ]
-NOMBRES = [n for n, _ in SENALES]
+NAMES = [n for n, _ in SIGNALS]
 
 
-# ---------------------------------------------------------------- calidad (copiado de src/choice.py, Lester)
+# ---------------------------------------------------------------- quality (same as src/choice.py)
 _MU: dict = {}
 
 
-def sesgo_posicion(imp: list[dict], ses: list[dict], antes: bool | None) -> np.ndarray:
-    """Compras por impresión en cada puesto 1..10 (lo que vale estar en ese puesto)."""
+def position_bias(imp: list[dict], ses: list[dict], before: bool | None) -> np.ndarray:
+    """Purchases per impression in each slot 1..10 (what being in that slot is worth)."""
     n_imp = np.zeros(11)
     for f in imp:
-        if antes is None or bool(f["antes"]) == antes:
+        if before is None or bool(f["before"]) == before:
             n_imp[int(f["pos"])] += float(f["n"])
-    n_com = np.zeros(11)
+    n_purch = np.zeros(11)
     for s in ses:
-        if antes is None or (s["ts"] < CORTE) == antes:
+        if before is None or (s["ts"] < CUTOFF) == before:
             if s["p"] in s["shown"]:
-                n_com[s["shown"].index(s["p"]) + 1] += 1
-    return n_com / np.maximum(n_imp, 1)
+                n_purch[s["shown"].index(s["p"]) + 1] += 1
+    return n_purch / np.maximum(n_imp, 1)
 
 
-def calidades(imp: list[dict], ses: list[dict], antes: bool | None) -> tuple[dict, dict]:
-    """product_id -> (compras, compras esperadas por sus posiciones). antes=True: solo datos < CORTE; None: todo."""
-    sp = sesgo_posicion(imp, ses, antes)
-    esperadas: dict[str, float] = defaultdict(float)
+def qualities(imp: list[dict], ses: list[dict], before: bool | None) -> tuple[dict, dict]:
+    """product_id -> (purchases, purchases expected from its slots). before=True: only data < CUTOFF; None: all."""
+    sp = position_bias(imp, ses, before)
+    expected: dict[str, float] = defaultdict(float)
     for f in imp:
-        if antes is None or bool(f["antes"]) == antes:
-            esperadas[f["pid"]] += float(f["n"]) * sp[int(f["pos"])]
-    compras: Counter = Counter()
+        if before is None or bool(f["before"]) == before:
+            expected[f["pid"]] += float(f["n"]) * sp[int(f["pos"])]
+    purchases: Counter = Counter()
     for s in ses:
-        if antes is None or (s["ts"] < CORTE) == antes:
-            compras[s["p"]] += 1
-    return dict(compras), dict(esperadas)
+        if before is None or (s["ts"] < CUTOFF) == before:
+            purchases[s["p"]] += 1
+    return dict(purchases), dict(expected)
 
 
-def calidad_tipica(compras: dict, esperadas: dict) -> float:
-    clave = (id(compras), id(esperadas))
-    if clave not in _MU:
-        r = [(compras.get(p, 0) + 0.5) / (e + 0.5) for p, e in esperadas.items() if e >= 5.0]
+def typical_quality(purchases: dict, expected: dict) -> float:
+    key_name = (id(purchases), id(expected))
+    if key_name not in _MU:
+        r = [(purchases.get(p, 0) + 0.5) / (e + 0.5) for p, e in expected.items() if e >= 5.0]
         _MU.clear()
-        _MU[clave] = float(np.median(r)) if r else 1.0
-    return _MU[clave]
+        _MU[key_name] = float(np.median(r)) if r else 1.0
+    return _MU[key_name]
 
 
-def log_calidad(pid: str, compras: dict, esperadas: dict, quitar: int = 0) -> float:
-    mu = calidad_tipica(compras, esperadas)
-    return math.log((compras.get(pid, 0) - quitar + SUAVIZADO * mu) / (esperadas.get(pid, 0.0) + SUAVIZADO))
+def log_quality(pid: str, purchases: dict, expected: dict, drop_ids: int = 0) -> float:
+    mu = typical_quality(purchases, expected)
+    return math.log((purchases.get(pid, 0) - drop_ids + SMOOTHING * mu) / (expected.get(pid, 0.0) + SMOOTHING))
 
 
-# ---------------------------------------------------------------- señales de los candidatos de una visita
-def _precio(d: dict) -> float:
+# ---------------------------------------------------------------- signals for the candidates of a visit
+def _price(d: dict) -> float:
     try:
         return float(d.get("price_eur") or 0)
     except (TypeError, ValueError):
         return 0.0
 
 
-def senales(cand: list[str], vistos: list[str], device: str, page: str, cat: dict, lc: dict[str, float],
-            rango: dict[str, int], covisitas: dict, perfil: dict | None, perfiles_producto: dict,
-            puestos: list[int] | None = None) -> np.ndarray:
-    """Matriz (len(cand), len(SENALES)). puestos=None -> todos en el puesto 1 (al recomendar)."""
-    n_pop = len(rango) + 1
-    lc_tipica = lc.get("__tipica__", 0.0)
-    ultimo = cat.get(vistos[-1], {}) if vistos else {}
-    p_ult = _precio(ultimo)
-    subs_vistas = {cat.get(v, {}).get("subcategory") for v in vistos} - {None, ""}
-    vistos_set = set(vistos)
-    perfil = perfil or {}
-    p_subs, p_marcas, p_cats = set(perfil.get("subcategorias", [])), set(perfil.get("marcas", [])), \
-        set(perfil.get("categorias", []))
-    p_med = float(perfil.get("precio_mediano") or 0)
-    log_compras = math.log1p(float(perfil.get("compras") or 0))
-    movil = float(device in ("ios", "android"))
-    ficha = float(page == "product")
-    frio = float(not vistos)
+def signals(cand: list[str], viewed: list[str], device: str, page: str, cat: dict, lc: dict[str, float],
+            rank: dict[str, int], covisits: dict, profile: dict | None, product_profiles: dict,
+            slots: list[int] | None = None) -> np.ndarray:
+    """Matrix (len(cand), len(SIGNALS)). slots=None -> everything in slot 1 (when recommending)."""
+    n_pop = len(rank) + 1
+    lc_typical = lc.get("__typical__", 0.0)
+    last = cat.get(viewed[-1], {}) if viewed else {}
+    p_last = _price(last)
+    viewed_subs = {cat.get(v, {}).get("subcategory") for v in viewed} - {None, ""}
+    viewed_set = set(viewed)
+    profile = profile or {}
+    p_subs, p_brands, p_cats = set(profile.get("subcategories", [])), set(profile.get("brands", [])), \
+        set(profile.get("categories", []))
+    p_median = float(profile.get("median_price") or 0)
+    log_purchases = math.log1p(float(profile.get("purchases") or 0))
+    mobile = float(device in ("ios", "android"))
+    card = float(page == "product")
+    cold = float(not viewed)
 
     covis: dict[str, float] = {}
-    for k, pid in enumerate(reversed(vistos)):
-        for pos, (otro, peso) in enumerate(covisitas.get(pid, [])):
-            covis[otro] = covis.get(otro, 0.0) + (DECAIMIENTO ** k) * peso / (pos + 1)
+    for k, pid in enumerate(reversed(viewed)):
+        for pos, (other, weight) in enumerate(covisits.get(pid, [])):
+            covis[other] = covis.get(other, 0.0) + (DECAY ** k) * weight / (pos + 1)
 
-    X = np.zeros((len(cand), len(SENALES)), dtype=np.float32)
+    X = np.zeros((len(cand), len(SIGNALS)), dtype=np.float32)
     for i, pid in enumerate(cand):
         d = cat.get(pid, {})
-        precio = max(_precio(d), 1.0)
-        X[i] = (lc.get(pid, lc_tipica),
-                -math.log1p(rango.get(pid, n_pop)),
-                float(bool(ultimo) and d.get("subcategory") == ultimo.get("subcategory")),
-                float(bool(ultimo) and d.get("brand") == ultimo.get("brand")),
-                float(d.get("subcategory") in subs_vistas),
-                math.log(precio / max(p_ult, 1.0)) if vistos else 0.0,
-                math.log(precio),
-                float(pid in vistos_set),
-                frio,
+        price = max(_price(d), 1.0)
+        X[i] = (lc.get(pid, lc_typical),
+                -math.log1p(rank.get(pid, n_pop)),
+                float(bool(last) and d.get("subcategory") == last.get("subcategory")),
+                float(bool(last) and d.get("brand") == last.get("brand")),
+                float(d.get("subcategory") in viewed_subs),
+                math.log(price / max(p_last, 1.0)) if viewed else 0.0,
+                math.log(price),
+                float(pid in viewed_set),
+                cold,
                 math.log1p(covis.get(pid, 0.0)),
                 float(d.get("subcategory") in p_subs),
-                float(d.get("brand") in p_marcas),
+                float(d.get("brand") in p_brands),
                 float(d.get("category") in p_cats),
-                math.log(precio / p_med) if p_med > 0 else 0.0,
-                log_compras,
-                float(perfiles_producto.get(pid, {}).get("tasa_ips", 0.0)),
-                movil,
-                ficha,
-                float(puestos[i]) if puestos else 1.0)
+                math.log(price / p_median) if p_median > 0 else 0.0,
+                log_purchases,
+                float(product_profiles.get(pid, {}).get("ips_rate", 0.0)),
+                mobile,
+                card,
+                float(slots[i]) if slots else 1.0)
     return X
 
 
-# ---------------------------------------------------------------- datos de entrenamiento
-def _vistos(s: dict) -> list[str]:
+# ---------------------------------------------------------------- training data
+def _viewed(s: dict) -> list[str]:
     return [v["product_id"] for v in (s["rv"] or []) if v.get("product_id")]
 
 
-def _es_recompra(s: dict, primera: dict) -> bool:
-    t = primera.get((s["u"], s["p"]))
+def _is_repurchase(s: dict, first: dict) -> bool:
+    t = first.get((s["u"], s["p"]))
     return t is not None and t < s["ts"]
 
 
-def _perfiles(hasta: str) -> tuple[dict, dict]:
-    """Perfiles de Artai (src/coldstart.py) con datos anteriores a `hasta`, guardados en data/ (no se sube)."""
-    ruta = DATA / f"perfiles_{hasta}.pkl"
-    if not ruta.exists():
+def _profiles(until: str) -> tuple[dict, dict]:
+    """Shopper and product profiles (src/coldstart.py) with data before `until`, cached in data/ (not committed)."""
+    target_path = DATA / f"profiles_{until}.pkl"
+    if not target_path.exists():
         from src import coldstart
-        ruta.write_bytes(pickle.dumps((coldstart._construir_perfil_comprador(hasta),
-                                       coldstart._construir_perfil_producto(hasta))))
-    return pickle.loads(ruta.read_bytes())
+        target_path.write_bytes(pickle.dumps((coldstart._build_shopper_profile(until),
+                                              coldstart._build_product_profile(until))))
+    return pickle.loads(target_path.read_bytes())
 
 
-PLIEGUES = 5
-"""Calidad "fuera de pliegue" para el entrenamiento (ver _calidad_por_pliegue)."""
+FOLDS = 5
+"""Out-of-fold quality for training (see _quality_per_fold)."""
 
 
-def _pliegue(s: dict) -> int:
-    return zlib.crc32(f"{s['u']}|{s['ts']}".encode()) % PLIEGUES  # igual en cada ejecución
+def _fold(s: dict) -> int:
+    return zlib.crc32(f"{s['u']}|{s['ts']}".encode()) % FOLDS  # same on every run
 
 
-def _calidad_por_pliegue(ses: list[dict], compras: dict, esperadas: dict) -> list[dict[str, float]]:
-    """Para las filas de entrenamiento, la calidad de cada producto se calcula SIN las compras de su propio
-    pliegue (1/5 de las visitas), escalando las del resto ×5/4. Con "dejar uno fuera" (lo que hace la v2) el
-    comprado tiene un valor exacto distinto al de no comprado y un árbol lo memoriza (medido: acierto del 1.º
-    0,112, como el azar). Fuera de pliegue, todas las filas de un pliegue comparten valor: no hay nada que
-    memorizar."""
-    por_pliegue = [Counter() for _ in range(PLIEGUES)]
+def _quality_per_fold(ses: list[dict], purchases: dict, expected: dict) -> list[dict[str, float]]:
+    """For the training rows, each product's quality is computed WITHOUT the purchases of its own fold (1/5 of the
+    visits), scaling the rest by 5/4. With "leave one out" (what v2 does) the bought product gets an exact value that
+    differs from the non-bought one and a tree memorises it (measured: top-1 hit 0.112, chance level). Out of fold,
+    every row in a fold shares the value: there's nothing to memorise."""
+    by_fold = [Counter() for _ in range(FOLDS)]
     for s in ses:
-        if s["ts"] < CORTE:
-            por_pliegue[_pliegue(s)][s["p"]] += 1
-    mu = calidad_tipica(compras, esperadas)
-    escala = PLIEGUES / (PLIEGUES - 1)
-    salida = []
-    for k in range(PLIEGUES):
-        fuera = {pid: (compras.get(pid, 0) - por_pliegue[k].get(pid, 0)) * escala
-                 for pid in set(compras) | set(esperadas)}
-        salida.append({pid: math.log((c + SUAVIZADO * mu) / (esperadas.get(pid, 0.0) + SUAVIZADO))
-                       for pid, c in fuera.items()})
-    return salida
+        if s["ts"] < CUTOFF:
+            by_fold[_fold(s)][s["p"]] += 1
+    mu = typical_quality(purchases, expected)
+    scale = FOLDS / (FOLDS - 1)
+    out = []
+    for k in range(FOLDS):
+        outside = {pid: (purchases.get(pid, 0) - by_fold[k].get(pid, 0)) * scale
+                   for pid in set(purchases) | set(expected)}
+        out.append({pid: math.log((c + SMOOTHING * mu) / (expected.get(pid, 0.0) + SMOOTHING))
+                    for pid, c in outside.items()})
+    return out
 
 
-def _matriz(sesiones: list[dict], cat, compras, esperadas, rango, covisitas, perfiles,
-            lc_pliegues: list[dict] | None):
-    """X (10 filas por visita), y (1 = el comprado) y el tamaño de cada grupo (visita).
-    lc_pliegues: calidad fuera de pliegue (entrenamiento); None = calidad normal (test)."""
-    pc, pp = perfiles
-    bloques, ys, grupos = [], [], []
+def _matrix(sessions: list[dict], cat, purchases, expected, rank, covisits, profiles,
+            lc_folds: list[dict] | None):
+    """X (10 rows per visit), y (1 = the bought one) and the size of each group (visit).
+    lc_folds: out-of-fold quality (training); None = plain quality (test)."""
+    pc, pp = profiles
+    blocks, ys, grps = [], [], []
     lc_normal = None
-    for s in sesiones:
+    for s in sessions:
         shown = list(s["shown"])
-        if lc_pliegues is not None:
-            lc = lc_pliegues[_pliegue(s)]
+        if lc_folds is not None:
+            lc = lc_folds[_fold(s)]
         else:
-            lc_normal = lc_normal or {pid: log_calidad(pid, compras, esperadas) for pid in set(esperadas) | set(compras)}
+            lc_normal = lc_normal or {pid: log_quality(pid, purchases, expected)
+                                      for pid in set(expected) | set(purchases)}
             lc = lc_normal
-        bloques.append(senales(shown, _vistos(s), s.get("dev", ""), s.get("page", ""), cat, lc, rango, covisitas,
-                               pc.get(s["u"]), pp, puestos=list(range(1, len(shown) + 1))))
+        blocks.append(signals(shown, _viewed(s), s.get("dev", ""), s.get("page", ""), cat, lc, rank, covisits,
+                              pc.get(s["u"]), pp, slots=list(range(1, len(shown) + 1))))
         ys.extend(float(pid == s["p"]) for pid in shown)
-        grupos.append(len(shown))
-    return np.vstack(bloques), np.asarray(ys), grupos
+        grps.append(len(shown))
+    return np.vstack(blocks), np.asarray(ys), grps
 
 
-def acierto(puntos: np.ndarray, y: np.ndarray, grupos: list[int]) -> tuple[float, float]:
-    """(acierto del 1.º, acierto en los 3 primeros): ¿el comprado es el que más puntúa de su visita?"""
+def hit(points: np.ndarray, y: np.ndarray, grps: list[int]) -> tuple[float, float]:
+    """(top-1 hit, top-3 hit): is the bought one the highest-scored of its visit?"""
     a1 = a3 = 0
     i = 0
-    for g in grupos:
-        orden = np.argsort(-puntos[i:i + g], kind="stable")
-        comprado = int(np.argmax(y[i:i + g]))
-        a1 += orden[0] == comprado
-        a3 += comprado in orden[:3]
+    for g in grps:
+        ordering = np.argsort(-points[i:i + g], kind="stable")
+        was_bought = int(np.argmax(y[i:i + g]))
+        a1 += ordering[0] == was_bought
+        a3 += was_bought in ordering[:3]
         i += g
-    return a1 / len(grupos), a3 / len(grupos)
+    return a1 / len(grps), a3 / len(grps)
 
 
-# ---------------------------------------------------------------- usar el modelo (lo llama ranking.recommend)
-_modelo: dict | None = None
-_leido = False
+# ---------------------------------------------------------------- using the model (called by ranking.recommend)
+_model: dict | None = None
+_loaded = False
 
 
-def modelo_guardado() -> dict | None:
-    """data/arbol.txt + data/arbol.json, leídos UNA vez. None (y aviso en consola) si faltan o no hay lightgbm."""
-    global _modelo, _leido
-    if not _leido:
-        _leido = True
+def saved_model() -> dict | None:
+    """data/tree.txt + data/tree.json, read ONCE. None (and a console warning) if missing or lightgbm isn't there."""
+    global _model, _loaded
+    if not _loaded:
+        _loaded = True
         try:
             import lightgbm as lgb
-            meta = json.loads((DATA / "arbol.json").read_text(encoding="utf-8"))
-            if meta.get("senales") != NOMBRES:
-                raise ValueError("arbol.json de otra versión")
-            _modelo = {"booster": lgb.Booster(model_file=str(DATA / "arbol.txt")), "lc": meta["lc"],
-                       "rango": meta["rango"]}
+            meta = json.loads((DATA / "tree.json").read_text(encoding="utf-8"))
+            if meta.get("signals") != NAMES:
+                raise ValueError("tree.json from another version")
+            _model = {"booster": lgb.Booster(model_file=str(DATA / "tree.txt")), "lc": meta["lc"],
+                      "rank": meta["rank"]}
         except (ImportError, OSError, ValueError, KeyError) as e:
-            _modelo = None
-            print(f"AVISO arbol: usar_arbol NO hace nada ({e}). Ejecuta: python -m src.tree", flush=True)
-    return _modelo
+            _model = None
+            print(f"WARNING tree: use_tree does NOTHING ({e}). Run: python -m src.tree", flush=True)
+    return _model
 
 
 _cache: dict = {}
 
 
-def _por_categoria(estado) -> dict[str, list[str]]:
-    clave = ("cat", id(estado.catalogo))
-    if clave not in _cache:
-        por: dict[str, list[str]] = defaultdict(list)
-        for pid, d in estado.catalogo.items():
-            por[d.get("category")].append(pid)
-        _cache[clave] = dict(por)
-    return _cache[clave]
+def _by_category(state) -> dict[str, list[str]]:
+    key_name = ("cat", id(state.catalog_info))
+    if key_name not in _cache:
+        by_key: dict[str, list[str]] = defaultdict(list)
+        for pid, d in state.catalog_info.items():
+            by_key[d.get("category")].append(pid)
+        _cache[key_name] = dict(by_key)
+    return _cache[key_name]
 
 
-def _mejores_frio(estado, modelo: dict) -> list[str]:
-    """Para compradores sin vistas: los N_FRIO mejores productos según calidad + popularidad (sin perfil)."""
-    clave = ("frio", id(estado.catalogo), id(modelo))
-    if clave not in _cache:
-        lc, rango = modelo["lc"], modelo["rango"]
-        tip, n = lc.get("__tipica__", 0.0), len(rango) + 1
-        todos = list(estado.catalogo)
-        todos.sort(key=lambda p: lc.get(p, tip) - 0.5 * math.log1p(rango.get(p, n)), reverse=True)
-        _cache[clave] = todos[:N_FRIO]
-    return _cache[clave]
+def _best_cold(state, model: dict) -> list[str]:
+    """For shoppers without views: the N_COLD best products by quality + popularity (no profile)."""
+    key_name = ("cold", id(state.catalog_info), id(model))
+    if key_name not in _cache:
+        lc, rank = model["lc"], model["rank"]
+        tip, n = lc.get("__typical__", 0.0), len(rank) + 1
+        all_items = list(state.catalog_info)
+        all_items.sort(key=lambda p: lc.get(p, tip) - 0.5 * math.log1p(rank.get(p, n)), reverse=True)
+        _cache[key_name] = all_items[:N_COLD]
+    return _cache[key_name]
 
 
-def candidatos(peticion: dict, estado, modelo: dict, vale) -> list[str]:
-    """Con vistas: todo lo disponible de la categoría de lo último visto, más lo visto de esa categoría.
-    Sin vistas: los N_FRIO mejores por calidad y popularidad. `vale` = disponible (y no comprado si se filtra)."""
-    cat = estado.catalogo
-    vistos = [v["product_id"] for v in (peticion.get("recent_views") or []) if v.get("product_id")]
-    if vistos:
-        categoria = cat.get(vistos[-1], {}).get("category")
-        cand = _por_categoria(estado).get(categoria, []) + \
-            [pid for pid in reversed(vistos) if cat.get(pid, {}).get("category") == categoria]
+def candidates(request: dict, state, model: dict, is_ok) -> list[str]:
+    """With views: everything available in the category of the last viewed product, plus what was viewed from it.
+    Without views: the N_COLD best by quality and popularity. `is_ok` = available (and not bought if filtering)."""
+    cat = state.catalog_info
+    viewed = [v["product_id"] for v in (request.get("recent_views") or []) if v.get("product_id")]
+    if viewed:
+        category = cat.get(viewed[-1], {}).get("category")
+        cand = _by_category(state).get(category, []) + \
+            [pid for pid in reversed(viewed) if cat.get(pid, {}).get("category") == category]
     else:
-        cand = _mejores_frio(estado, modelo)
-    return [pid for pid in dict.fromkeys(cand) if vale(pid)]
+        cand = _best_cold(state, model)
+    return [pid for pid in dict.fromkeys(cand) if is_ok(pid)]
 
 
-def puntuar(peticion: dict, cand: list[str], estado, modelo: dict) -> np.ndarray:
-    ctx = peticion.get("context") or {}
-    vistos = [v["product_id"] for v in (peticion.get("recent_views") or []) if v.get("product_id")]
-    perfil = getattr(estado, "perfiles_comprador", {}).get(str(peticion.get("user_id", "")))
-    X = senales(cand, vistos, str(ctx.get("device", "")), str(ctx.get("page", "")), estado.catalogo,
-                modelo["lc"], modelo["rango"], estado.covisitas, perfil, getattr(estado, "perfiles_producto", {}))
-    return modelo["booster"].predict(X, num_threads=1)
+def score_candidates(request: dict, cand: list[str], state, model: dict) -> np.ndarray:
+    ctx = request.get("context") or {}
+    viewed = [v["product_id"] for v in (request.get("recent_views") or []) if v.get("product_id")]
+    profile = getattr(state, "shopper_profiles", {}).get(str(request.get("user_id", "")))
+    X = signals(cand, viewed, str(ctx.get("device", "")), str(ctx.get("page", "")), state.catalog_info,
+                model["lc"], model["rank"], state.covisits, profile, getattr(state, "product_profiles", {}))
+    return model["booster"].predict(X, num_threads=1)
 
 
-# ---------------------------------------------------------------- principal
+# ---------------------------------------------------------------- main
 def main() -> None:
     import lightgbm as lgb
 
-    from src.catalog import load_catalog as cargar_catalogo
-    from src.covisits import cargar_covisitas
+    from src.catalog import load_catalog
+    from src.covisits import load_covisits
 
-    ruta = DATA / "eleccion.pkl"
-    if not ruta.exists():  # mismos datos que la v2: python -m src.choice --descargar
-        from src.choice import descargar
-        descargar()
-    d = pickle.loads(ruta.read_bytes())
-    ses, imp, primeras = d["ses"], d["imp"], d["compras"]
-    primera = {(f["u"], f["p"]): f["t"] for f in primeras}
-    cat = cargar_catalogo()
+    target_path = DATA / "choice.pkl"
+    if not target_path.exists():  # same data as v2: python -m src.choice --download
+        from src.choice import download
+        download()
+    d = pickle.loads(target_path.read_bytes())
+    ses, imp, firsts = d["ses"], d["imp"], d["purchases"]
+    first = {(f["u"], f["p"]): f["t"] for f in firsts}
+    cat = load_catalog()
     ses = [s for s in ses if s["p"] in s["shown"]]
-    nuevas = [s for s in ses if not _es_recompra(s, primera)]
-    print(f"compras en el carrusel: {len(ses)} · sin recompra: {len(nuevas)}")
+    fresh = [s for s in ses if not _is_repurchase(s, first)]
+    print(f"carousel purchases: {len(ses)}, without repurchases: {len(fresh)}")
 
-    compras, esperadas = calidades(imp, ses, antes=True)
-    rango = {pid: i for i, (pid, _) in enumerate(Counter(f["p"] for f in primeras if f["t"] < CORTE).most_common())}
-    entreno = [s for s in nuevas if INICIO_ENTRENO <= s["ts"] < CORTE]
-    test = [s for s in nuevas if s["ts"] >= CORTE]
-    print(f"entreno {len(entreno)} compras ({INICIO_ENTRENO} -> {CORTE}) · test {len(test)} compras (>= {CORTE})")
+    purchases, expected = qualities(imp, ses, before=True)
+    rank = {pid: i for i, (pid, _) in enumerate(Counter(f["p"] for f in firsts if f["t"] < CUTOFF).most_common())}
+    training = [s for s in fresh if TRAIN_START <= s["ts"] < CUTOFF]
+    test = [s for s in fresh if s["ts"] >= CUTOFF]
+    print(f"train {len(training)} purchases ({TRAIN_START} -> {CUTOFF}), test {len(test)} purchases (>= {CUTOFF})")
 
-    cov_ent, per_ent = cargar_covisitas(INICIO_ENTRENO), _perfiles(INICIO_ENTRENO)
-    cov_test, per_test = cargar_covisitas(CORTE), _perfiles(CORTE)
-    lc_pliegues = _calidad_por_pliegue(ses, compras, esperadas)
-    X, y, g = _matriz(entreno, cat, compras, esperadas, rango, cov_ent, per_ent, lc_pliegues)
-    Xt, yt, gt = _matriz(test, cat, compras, esperadas, rango, cov_test, per_test, None)
+    cov_train, per_train = load_covisits(TRAIN_START), _profiles(TRAIN_START)
+    cov_test, per_test = load_covisits(CUTOFF), _profiles(CUTOFF)
+    lc_folds = _quality_per_fold(ses, purchases, expected)
+    X, y, g = _matrix(training, cat, purchases, expected, rank, cov_train, per_train, lc_folds)
+    Xt, yt, gt = _matrix(test, cat, purchases, expected, rank, cov_test, per_test, None)
 
-    # 1) ¿Cuántos árboles? Entrena hasta INICIO_PARADA y para cuando la última semana deja de mejorar.
-    n_a = sum(1 for s in entreno if s["ts"] < INICIO_PARADA)
-    filas_a = sum(g[:n_a])
-    parada = lgb.train({**PARAMS_LGB, "metric": "ndcg", "eval_at": [1]},
-                       lgb.Dataset(X[:filas_a], y[:filas_a], group=g[:n_a]), MAX_ARBOLES,
-                       valid_sets=[lgb.Dataset(X[filas_a:], y[filas_a:], group=g[n_a:])],
+    # 1) How many trees? Train up to OUTAGE_START and stop when the last week stops improving.
+    n_a = sum(1 for s in training if s["ts"] < OUTAGE_START)
+    rows_a = sum(g[:n_a])
+    outage = lgb.train({**PARAMS_LGB, "metric": "ndcg", "eval_at": [1]},
+                       lgb.Dataset(X[:rows_a], y[:rows_a], group=g[:n_a]), MAX_TREES,
+                       valid_sets=[lgb.Dataset(X[rows_a:], y[rows_a:], group=g[n_a:])],
                        callbacks=[lgb.early_stopping(50, verbose=False)])
-    n_arboles = max(parada.best_iteration, 50)
-    # 2) Modelo final: todo el entrenamiento con ese número de árboles.
-    modelo = lgb.train(PARAMS_LGB, lgb.Dataset(X, y, group=g), n_arboles)
+    n_trees = max(outage.best_iteration, 50)
+    # 2) Final model: the whole training set with that number of trees.
+    model = lgb.train(PARAMS_LGB, lgb.Dataset(X, y, group=g), n_trees)
 
-    print(f"\nárboles: {n_arboles}")
-    a1, a3 = acierto(modelo.predict(Xt), yt, gt)
+    print(f"\ntrees: {n_trees}")
+    a1, a3 = hit(model.predict(Xt), yt, gt)
     Xt1 = Xt.copy()
-    Xt1[:, NOMBRES.index("puesto")] = 1.0
-    b1, b3 = acierto(modelo.predict(Xt1), yt, gt)
-    print(f"test (con su puesto real, como la v2): acierto del 1.º {a1:.3f} · en los 3 primeros {a3:.3f}")
-    print(f"test (todos en puesto 1, como en vivo):  acierto del 1.º {b1:.3f} · en los 3 primeros {b3:.3f}")
-    print("(al azar: 0.100 y 0.300)")
+    Xt1[:, NAMES.index("slot")] = 1.0
+    b1, b3 = hit(model.predict(Xt1), yt, gt)
+    print(f"test (with its real slot, like v2):     top-1 hit {a1:.3f}, top-3 hit {a3:.3f}")
+    print(f"test (everything in slot 1, like live): top-1 hit {b1:.3f}, top-3 hit {b3:.3f}")
+    print("(chance: 0.100 and 0.300)")
 
-    imp_gan = modelo.feature_importance("gain")
-    print(f"\n{'señal':<28}{'% de la ganancia':>18}   qué es")
-    for (nombre, texto), v in sorted(zip(SENALES, imp_gan), key=lambda t: -t[1]):
-        print(f"{nombre:<28}{100 * v / imp_gan.sum():>17.1f}%   {texto}")
+    imp_gain = model.feature_importance("gain")
+    print(f"\n{'signal':<28}{'% of the gain':>18}   what it is")
+    for (name, txt), v in sorted(zip(SIGNALS, imp_gain), key=lambda t: -t[1]):
+        print(f"{name:<28}{100 * v / imp_gain.sum():>17.1f}%   {txt}")
 
-    # Para vivo: mismo modelo validado; calidad y popularidad con TODO el historial.
-    compras_t, esperadas_t = calidades(imp, ses, antes=None)
-    lc = {pid: log_calidad(pid, compras_t, esperadas_t) for pid in set(esperadas_t) | set(compras_t)}
-    lc["__tipica__"] = math.log(calidad_tipica(compras_t, esperadas_t))  # productos nuevos: calidad típica
-    rango_t = {pid: i for i, (pid, _) in enumerate(Counter(f["p"] for f in primeras).most_common())}
-    modelo.save_model(str(DATA / "arbol.txt"))
-    (DATA / "arbol.json").write_text(json.dumps({"senales": NOMBRES, "lc": lc, "rango": rango_t, "arboles": n_arboles,
-                                                 "validacion": {"acierto_1_puesto_real": a1, "acierto_3_puesto_real": a3,
-                                                                "acierto_1_puesto_1": b1, "acierto_3_puesto_1": b3}}),
-                                     encoding="utf-8")
-    print(f"\nguardado data/arbol.txt y data/arbol.json ({len(lc)} productos con calidad)")
+    # for live: same validated model; quality and popularity with ALL the history
+    purchases_t, expected_t = qualities(imp, ses, before=None)
+    lc = {pid: log_quality(pid, purchases_t, expected_t) for pid in set(expected_t) | set(purchases_t)}
+    lc["__typical__"] = math.log(typical_quality(purchases_t, expected_t))  # new products: typical quality
+    rank_t = {pid: i for i, (pid, _) in enumerate(Counter(f["p"] for f in firsts).most_common())}
+    model.save_model(str(DATA / "tree.txt"))
+    (DATA / "tree.json").write_text(json.dumps({"signals": NAMES, "lc": lc, "rank": rank_t, "trees": n_trees,
+                                                "validation": {"hit_1_real_slot": a1, "hit_3_real_slot": a3,
+                                                               "hit_1_slot_1": b1, "hit_3_slot_1": b3}}),
+                                    encoding="utf-8")
+    print(f"\nsaved data/tree.txt and data/tree.json ({len(lc)} products with a quality)")
 
 
 if __name__ == "__main__":

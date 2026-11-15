@@ -1,13 +1,13 @@
 # CLAUDE.md
 
-Todas las reglas están en AGENTS.md (lo comparten Claude Code y OpenCode). No dupliques reglas aquí.
+All the rules live in AGENTS.md (shared by Claude Code and OpenCode). Don't duplicate them here.
 
 @AGENTS.md
 @README.md
 @docs/challenge.md
 @docs/rawtree.md
 
-## Solo para Claude Code
-- Para tareas de más de un archivo, usa plan mode primero (Shift+Tab).
-- Si vas a revisar un cambio grande, usa un subagente que solo lea y que no haya visto el razonamiento anterior.
-- Las preferencias personales van en `CLAUDE.local.md` (no se sube al repo).
+## Claude Code only
+- For tasks touching more than one file, use plan mode first (Shift+Tab).
+- To review a big change, use a read-only subagent that hasn't seen the previous reasoning.
+- Personal preferences go in `CLAUDE.local.md` (not committed).

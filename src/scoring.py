@@ -1,24 +1,24 @@
-"""R5 · Puntuación explicable: regresión logística. Dueño: Ranking.
+"""R5: explainable scoring with a logistic regression. Owner: Ranking.
 
-    python -m src.scoring          # entrena (o lee lo ya descargado de data/), enseña coeficientes y validación
+    python -m src.scoring          # trains (or reads what's already in data/), prints coefficients and validation
 
-En vez de sumar puntos "a ojo", un modelo pequeño aprende cuánto vale cada señal para que un producto ENSEÑADO
-en el carrusel se compre. Es una sola neurona con sigmoide:  P(compra) = 1 / (1 + e^-(b + w1·x1 + w2·x2 + ...)).
+Instead of adding points "by eye", a small model learns how much each signal is worth for a product SHOWN in the
+carousel to get bought. It's a single neuron with a sigmoid:  P(purchase) = 1 / (1 + e^-(b + w1*x1 + w2*x2 + ...)).
 
-- Datos: visitas al carrusel antiguo (shop.history_sessions) entre INICIO y CORTE. Cada visita da 10 filas, una
-  por producto enseñado; etiqueta = 1 si compró ese producto.
-- Las señales (features) existen también para productos y compradores NUEVOS: nunca se usa el product_id.
-- Las piezas (co-visitas, comprados, populares) se calculan solo con datos ANTERIORES a INICIO: así el modelo
-  aprende con la misma información que tendría en vivo y no mira el futuro.
-- Sesgo del carrusel antiguo: enseñaba sobre todo lo popular. Cada fila pesa 1/propensity (recortado a
-  RECORTE_PESO) para que lo que casi nunca se enseñaba cuente lo suyo (IPS, docs/investigacion.md punto 3).
-- Sesgo de posición: lo de arriba se compra más solo por estar arriba. El modelo lleva una señal por puesto
-  (2º...10º) durante el entrenamiento; al recomendar se quita, porque queremos saber cuánto vale el PRODUCTO.
-- Validación (chequeo de Ranking, no la evaluación oficial): las 100.000 visitas de test de Evaluación
-  (posteriores a CORTE), con el Estado de data/estado_<CORTE>.pkl.
+- Data: visits to the old carousel (shop.history_sessions) between START and CUTOFF. Each visit gives 10 rows, one
+  per product shown; label = 1 if they bought that product.
+- The signals (features) also exist for NEW products and shoppers: product_id is never used.
+- The pieces (co-visits, bought, best sellers) are computed only with data BEFORE START: that way the model learns
+  with the same information it would have live and never looks at the future.
+- Old-carousel bias: it mostly showed popular stuff. Each row weighs 1/propensity (clipped at WEIGHT_CLIP) so that
+  what was hardly ever shown counts for what it's worth (IPS, docs/research.md point 3).
+- Position bias: what's on top sells more just for being on top. The model carries one signal per slot (2nd..10th)
+  during training; it's dropped when recommending, because we want to know what the PRODUCT is worth.
+- Validation (Ranking's own check, not the official evaluation): Evaluation's 100,000 test visits (after CUTOFF),
+  with the State in data/state_<CUTOFF>.pkl.
 
-La regresión se resuelve con numpy (método de Newton), sin dependencias nuevas. El resultado (coeficientes) se
-guarda en data/puntuacion.json (data/ no se sube al repo).
+The regression is solved with numpy (Newton's method), no new dependencies. The result (coefficients) is saved to
+data/scoring.json (data/ is not committed).
 """
 from __future__ import annotations
 
@@ -29,268 +29,270 @@ from pathlib import Path
 
 import numpy as np
 
-from src import catalog, covisits as covisitas, users as usuarios
-from src.state import Estado, por_categoria
+from src import catalog, covisits, users
+from src.state import State, by_category
 from src.rawtree import query
 
 DATA = Path(__file__).resolve().parent.parent / "data"
-INICIO, CORTE = "2026-10-24", "2026-11-07"
-"""Se entrena con las dos semanas anteriores al corte de evaluación."""
-UNA_DE_CADA_CON_COMPRA, UNA_DE_CADA_SIN_COMPRA = 1, 10
-"""Las compras son raras (6.545 de 466.000 visitas en esas dos semanas, ~1,4 %): se cogen TODAS las visitas con
-compra y 1 de cada 10 sin compra. Para compensar, cada visita sin compra pesa 10 veces más."""
-RECORTE_PESO = 50.0
+START, CUTOFF = "2026-10-24", "2026-11-07"
+"""Trained on the two weeks before the evaluation cutoff."""
+ONE_IN_WITH_PURCHASE, ONE_IN_WITHOUT_PURCHASE = 1, 10
+"""Purchases are rare (6,545 out of 466,000 visits in those two weeks, ~1.4 %): we take ALL visits with a purchase
+and 1 in 10 without. To compensate, each visit without a purchase weighs 10 times more."""
+WEIGHT_CLIP = 50.0
 L2 = 1.0
-"""Freno para que ningún coeficiente se dispare (regularización)."""
-DECAIMIENTO = 0.7
+"""Brake so that no coefficient blows up (regularisation)."""
+DECAY = 0.7
 
-SENALES = [
-    ("log_precio", "logaritmo del precio"),
-    ("misma_categoria", "misma categoría que lo último visto"),
-    ("misma_subcategoria", "misma subcategoría que lo último visto"),
-    ("misma_marca", "misma marca que algo de lo visto"),
-    ("revisita", "ya lo ha visto en esta sesión"),
-    ("covisita", "log(1 + puntos de co-visita con lo visto)"),
-    ("popularidad", "-log(1 + puesto en los más vendidos)"),
-    ("popularidad_categoria", "-log(1 + puesto en los más vendidos de su categoría)"),
-    ("distancia_precio", "|log precio - log precio medio de lo visto|"),
-    ("frio_x_popularidad", "popularidad, solo si no hay vistas (comprador frío)"),
-    ("movil_x_log_precio", "log precio, solo si entra desde el móvil (ios/android)"),
+SIGNALS = [
+    ("log_price", "log of the price"),
+    ("same_category", "same category as the last viewed"),
+    ("same_subcategory", "same subcategory as the last viewed"),
+    ("same_brand", "same brand as something viewed"),
+    ("revisit", "already viewed in this session"),
+    ("covisit", "log(1 + co-visit points with what was viewed)"),
+    ("popularity", "-log(1 + rank among the best sellers)"),
+    ("category_popularity", "-log(1 + rank among its category's best sellers)"),
+    ("price_distance", "|log price - mean log price of what was viewed|"),
+    ("cold_x_popularity", "popularity, only if there are no views (cold shopper)"),
+    ("mobile_x_log_price", "log price, only when coming from mobile (ios/android)"),
 ]
-NOMBRES = [n for n, _ in SENALES]
-PUESTOS = [f"puesto_{i}" for i in range(2, 11)]
+NAMES = [n for n, _ in SIGNALS]
+SLOTS = [f"slot_{i}" for i in range(2, 11)]
 
 
-# ---------------------------------------------------------------- señales de cada candidato
+# ---------------------------------------------------------------- signals for each candidate
 class _Indices:
-    """Puestos de cada producto en las listas de populares (se calcula una vez por Estado)."""
+    """Rank of each product in the best-seller lists (computed once per State)."""
 
-    def __init__(self, estado: Estado):
-        self.global_ = {pid: i for i, pid in enumerate(estado.populares)}
-        self.categoria = {pid: i for lista in estado.populares_categoria.values() for i, pid in enumerate(lista)}
-        self.n = len(estado.populares) + 1
+    def __init__(self, state: State):
+        self.global_ = {pid: i for i, pid in enumerate(state.popular)}
+        self.category = {pid: i for items_list in state.popular_by_category.values()
+                         for i, pid in enumerate(items_list)}
+        self.n = len(state.popular) + 1
 
 
 _cache: dict[int, _Indices] = {}
 
 
-def _indices(estado: Estado) -> _Indices:
-    if id(estado) not in _cache:
+def _indices(state: State) -> _Indices:
+    if id(state) not in _cache:
         _cache.clear()
-        _cache[id(estado)] = _Indices(estado)
-    return _cache[id(estado)]
+        _cache[id(state)] = _Indices(state)
+    return _cache[id(state)]
 
 
-def _log_precio(datos: dict) -> float:
+def _log_price(payload: dict) -> float:
     try:
-        return math.log(max(float(datos.get("price_eur") or 0), 1.0))
+        return math.log(max(float(payload.get("price_eur") or 0), 1.0))
     except (TypeError, ValueError):
         return 0.0
 
 
-def senales(peticion: dict, candidatos: list[str], estado: Estado) -> np.ndarray:
-    """Una fila por candidato con las señales de SENALES (sin puestos). Solo lee `estado`, como recommend()."""
-    cat = estado.catalogo
-    idx = _indices(estado)
-    vistos = [v["product_id"] for v in (peticion.get("recent_views") or []) if v.get("product_id")]
-    ultimo = cat.get(vistos[-1], {}) if vistos else {}
-    marcas = {cat.get(v, {}).get("brand") for v in vistos} - {None, ""}
-    precios = [_log_precio(cat.get(v, {})) for v in vistos]
-    precio_medio = sum(precios) / len(precios) if precios else 0.0
-    ctx = peticion.get("context") or {}
-    movil = float(str(ctx.get("device", "")) in ("ios", "android"))
-    frio = float(not vistos)
+def signals(request: dict, candidates: list[str], state: State) -> np.ndarray:
+    """One row per candidate with the SIGNALS (no slots). Only reads `state`, like recommend()."""
+    cat = state.catalog_info
+    idx = _indices(state)
+    viewed = [v["product_id"] for v in (request.get("recent_views") or []) if v.get("product_id")]
+    last = cat.get(viewed[-1], {}) if viewed else {}
+    brands = {cat.get(v, {}).get("brand") for v in viewed} - {None, ""}
+    prices = [_log_price(cat.get(v, {})) for v in viewed]
+    avg_price = sum(prices) / len(prices) if prices else 0.0
+    ctx = request.get("context") or {}
+    mobile = float(str(ctx.get("device", "")) in ("ios", "android"))
+    cold = float(not viewed)
 
     covis: dict[str, float] = {}
-    for k, pid in enumerate(reversed(vistos)):
-        for pos, (otro, peso) in enumerate(estado.covisitas.get(pid, [])):
-            covis[otro] = covis.get(otro, 0.0) + (DECAIMIENTO ** k) * peso / (pos + 1)
+    for k, pid in enumerate(reversed(viewed)):
+        for pos, (other, weight) in enumerate(state.covisits.get(pid, [])):
+            covis[other] = covis.get(other, 0.0) + (DECAY ** k) * weight / (pos + 1)
 
-    vistos_set = set(vistos)
-    filas = []
-    for c in candidatos:
+    viewed_set = set(viewed)
+    rows = []
+    for c in candidates:
         d = cat.get(c, {})
-        lp = _log_precio(d)
+        lp = _log_price(d)
         pop = -math.log1p(idx.global_.get(c, idx.n))
-        filas.append([
+        rows.append([
             lp,
-            float(bool(vistos) and d.get("category") == ultimo.get("category")),
-            float(bool(vistos) and d.get("subcategory") == ultimo.get("subcategory")),
-            float(d.get("brand") in marcas),
-            float(c in vistos_set),
+            float(bool(viewed) and d.get("category") == last.get("category")),
+            float(bool(viewed) and d.get("subcategory") == last.get("subcategory")),
+            float(d.get("brand") in brands),
+            float(c in viewed_set),
             math.log1p(covis.get(c, 0.0)),
             pop,
-            -math.log1p(idx.categoria.get(c, idx.n)),
-            abs(lp - precio_medio) if precios else 0.0,
-            frio * pop,
-            movil * lp,
+            -math.log1p(idx.category.get(c, idx.n)),
+            abs(lp - avg_price) if prices else 0.0,
+            cold * pop,
+            mobile * lp,
         ])
-    return np.asarray(filas, dtype=np.float64)
+    return np.asarray(rows, dtype=np.float64)
 
 
-def _puestos(n_filas: int) -> np.ndarray:
-    """Señal de puesto (2º..10º) para las 10 filas de una visita; el 1º es la referencia (todo ceros)."""
-    m = np.zeros((n_filas, len(PUESTOS)))
-    for i in range(1, min(n_filas, 10)):
+def _slots(n_rows: int) -> np.ndarray:
+    """Slot signal (2nd..10th) for the 10 rows of a visit; the 1st is the reference (all zeros)."""
+    m = np.zeros((n_rows, len(SLOTS)))
+    for i in range(1, min(n_rows, 10)):
         m[i, i - 1] = 1.0
     return m
 
 
-# ---------------------------------------------------------------- usar el modelo (lo llama ranking.recommend)
-_modelo: dict | None = None
-_modelo_leido = False
+# ---------------------------------------------------------------- using the model (called by ranking.recommend)
+_model: dict | None = None
+_loaded_model = False
 
 
-def modelo_guardado() -> dict | None:
-    """Coeficientes de data/puntuacion.json, leídos UNA vez (la primera llamada). None si no existe el archivo:
-    entonces recommend() sigue sin modelo. Para crearlo: python -m src.scoring."""
-    global _modelo, _modelo_leido
-    if not _modelo_leido:
-        _modelo_leido = True
+def saved_model() -> dict | None:
+    """Coefficients from data/scoring.json, read ONCE (on the first call). None if the file doesn't exist: then
+    recommend() carries on without a model. To create it: python -m src.scoring."""
+    global _model, _loaded_model
+    if not _loaded_model:
+        _loaded_model = True
         try:
-            m = json.loads((DATA / "puntuacion.json").read_text())
-            m["_media"], m["_desv"] = np.asarray(m["media"]), np.asarray(m["desviacion"])
-            m["_coef"] = np.asarray(m["coeficientes"])
-            _modelo = m if m.get("senales") == NOMBRES else None  # señales distintas = archivo viejo: no usar
+            m = json.loads((DATA / "scoring.json").read_text())
+            m["_mean"], m["_std"] = np.asarray(m["avg"]), np.asarray(m["deviation"])
+            m["_coef"] = np.asarray(m["coefficients"])
+            _model = m if m.get("signals") == NAMES else None  # different signals = old file: don't use it
         except (OSError, ValueError, KeyError):
-            _modelo = None
-        if _modelo is None:  # se ve en la consola del servicio: sin esto, usar_modelo se ignoraría en silencio
-            print("AVISO puntuacion: no hay data/puntuacion.json válido -> usar_modelo NO hace nada. "
-                  "Ejecuta: python -m src.scoring", flush=True)
-    return _modelo
+            _model = None
+        if _model is None:  # shows up in the service console: otherwise use_model would be silently ignored
+            print("WARNING scoring: no valid data/scoring.json -> use_model does NOTHING. "
+                  "Run: python -m src.scoring", flush=True)
+    return _model
 
 
-def puntuar(peticion: dict, candidatos: list[str], estado: Estado, modelo: dict) -> np.ndarray:
-    """Puntuación de cada candidato (más alta = más probable que lo compre). Sin puestos: solo el producto.
-    Es la parte de dentro de la sigmoide; para ordenar no hace falta aplicarla."""
-    return (senales(peticion, candidatos, estado) - modelo["_media"]) / modelo["_desv"] @ modelo["_coef"]
+def score_candidates(request: dict, candidates: list[str], state: State, model: dict) -> np.ndarray:
+    """Score of each candidate (higher = more likely to be bought). No slots: just the product.
+    It's the inside of the sigmoid; ranking doesn't need to apply it."""
+    return (signals(request, candidates, state) - model["_mean"]) / model["_std"] @ model["_coef"]
 
 
-# ---------------------------------------------------------------- datos
+# ---------------------------------------------------------------- data
 _SQL = """
 SELECT user_id::String AS user_id, `context.device`::String AS device, recent_views, shown, propensity,
        purchased::String AS purchased
 FROM shop.history_sessions
-WHERE ts::DateTime64(3) >= '{inicio}' AND ts::DateTime64(3) < '{fin}'
-  AND if(purchased::String != '', cityHash64(request_id::String) % {con} = 0,
-                                  cityHash64(request_id::String) % {sin} = 0)"""
+WHERE ts::DateTime64(3) >= '{start}' AND ts::DateTime64(3) < '{end_ts}'
+  AND if(purchased::String != '', cityHash64(request_id::String) % {one_in_with} = 0,
+                                  cityHash64(request_id::String) % {one_in_without} = 0)"""
 
 
-def _visitas_entreno() -> list[dict]:
-    ruta = DATA / f"entreno_{INICIO}_{CORTE}.pkl"
-    if ruta.exists():
-        return pickle.loads(ruta.read_bytes())
-    print("Descargando visitas de entrenamiento (solo la primera vez)...")
-    filas = query(_SQL.format(inicio=INICIO, fin=CORTE, con=UNA_DE_CADA_CON_COMPRA, sin=UNA_DE_CADA_SIN_COMPRA),
-                  timeout=600)
-    visitas = [{"user_id": f["user_id"], "context": {"device": f["device"]}, "recent_views": f["recent_views"] or [],
-                "shown": f["shown"], "propensity": f["propensity"], "purchased": f["purchased"] or None}
-               for f in filas]
+def _training_visits() -> list[dict]:
+    target_path = DATA / f"train_{START}_{CUTOFF}.pkl"
+    if target_path.exists():
+        return pickle.loads(target_path.read_bytes())
+    print("Downloading training visits (first time only)...")
+    rows = query(_SQL.format(start=START, end_ts=CUTOFF, one_in_with=ONE_IN_WITH_PURCHASE,
+                             one_in_without=ONE_IN_WITHOUT_PURCHASE),
+                 timeout=600)
+    visits = [{"user_id": f["user_id"], "context": {"device": f["device"]}, "recent_views": f["recent_views"] or [],
+               "shown": f["shown"], "propensity": f["propensity"], "purchased": f["purchased"] or None}
+              for f in rows]
     DATA.mkdir(exist_ok=True)
-    ruta.write_bytes(pickle.dumps(visitas))
-    return visitas
+    target_path.write_bytes(pickle.dumps(visits))
+    return visits
 
 
-def _estado_entreno() -> Estado:
-    """Piezas calculadas solo con datos anteriores a INICIO."""
-    cat = catalog.load_catalog(INICIO)
-    pop = catalog.load_popular(INICIO)
-    return Estado(catalogo=cat, disponibles=catalog.available(cat), populares=pop,
-                  populares_categoria=por_categoria(cat, pop), covisitas=covisitas.cargar_covisitas(INICIO),
-                  comprados=usuarios.cargar_comprados(INICIO))
+def _training_state() -> State:
+    """Pieces computed only with data before START."""
+    cat = catalog.load_catalog(START)
+    pop = catalog.load_popular(START)
+    return State(catalog_info=cat, available_ids=catalog.available(cat), popular=pop,
+                 popular_by_category=by_category(cat, pop), covisits=covisits.load_covisits(START),
+                 bought=users.load_bought(START))
 
 
-def _matriz(visitas: list[dict], estado: Estado, ponderar: bool):
-    """X (señales + puestos), y (¿compró?), w (peso de cada fila) y a qué visita pertenece cada fila.
+def _matrix(visits: list[dict], state: State, weigh: bool):
+    """X (signals + slots), y (bought?), w (weight of each row) and which visit each row belongs to.
 
-    Recompras FUERA (los organizadores: en vivo no hay recompras; en el historial son ~62 % de las compras y el
-    modelo aprendería ese artefacto): se descartan las visitas cuya compra es algo que el comprador ya tenía, y en
-    las demás, las filas de productos que ya tenía (en vivo no se le enseñan). Devuelve también cuántas visitas
-    se descartaron."""
-    bloques, ys, ws, grupo = [], [], [], []
-    descartadas = 0
-    for g, v in enumerate(visitas):
-        tenia = estado.comprados.get(str(v.get("user_id", "")), set())
-        if v["purchased"] and v["purchased"] in tenia:
-            descartadas += 1
+    Repurchases OUT (organisers: there are no repurchases live; in the history they're ~62 % of purchases and the
+    model would learn that artefact): visits whose purchase is something the shopper already had are dropped, and
+    in the rest, the rows of products they already had (live they don't get shown). Also returns how many visits
+    were dropped."""
+    blocks, ys, ws, grp = [], [], [], []
+    discarded = 0
+    for g, v in enumerate(visits):
+        had = state.bought.get(str(v.get("user_id", "")), set())
+        if v["purchased"] and v["purchased"] in had:
+            discarded += 1
             continue
         shown = list(v["shown"])
-        quedan = [i for i, p in enumerate(shown) if p not in tenia]
-        if not quedan:
+        remaining = [i for i, p in enumerate(shown) if p not in had]
+        if not remaining:
             continue
-        x = np.hstack([senales(v, shown, estado), _puestos(len(shown))])[quedan]  # el puesto original se conserva
-        bloques.append(x)
-        ys.extend(float(shown[i] == v["purchased"]) for i in quedan)
-        base = 1.0 if (not ponderar or v["purchased"]) else UNA_DE_CADA_SIN_COMPRA / UNA_DE_CADA_CON_COMPRA
-        ws.extend(base * (min(1.0 / max(float(v["propensity"][i]), 1e-9), RECORTE_PESO) if ponderar else 1.0)
-                  for i in quedan)
-        grupo.extend([g] * len(quedan))
-    return np.vstack(bloques), np.asarray(ys), np.asarray(ws), np.asarray(grupo), descartadas
+        x = np.hstack([signals(v, shown, state), _slots(len(shown))])[remaining]  # original slot is kept
+        blocks.append(x)
+        ys.extend(float(shown[i] == v["purchased"]) for i in remaining)
+        base = 1.0 if (not weigh or v["purchased"]) else ONE_IN_WITHOUT_PURCHASE / ONE_IN_WITH_PURCHASE
+        ws.extend(base * (min(1.0 / max(float(v["propensity"][i]), 1e-9), WEIGHT_CLIP) if weigh else 1.0)
+                  for i in remaining)
+        grp.extend([g] * len(remaining))
+    return np.vstack(blocks), np.asarray(ys), np.asarray(ws), np.asarray(grp), discarded
 
 
-# ---------------------------------------------------------------- la regresión (Newton con numpy)
-def entrenar(X: np.ndarray, y: np.ndarray, w: np.ndarray, l2: float = L2, iteraciones: int = 30) -> np.ndarray:
-    """Regresión logística ponderada. Devuelve [b, w1, w2, ...]. Newton: en cada paso se aproxima la pérdida por
-    una parábola y se salta a su mínimo; con ~20 señales converge en pocas vueltas."""
+# ---------------------------------------------------------------- the regression (Newton with numpy)
+def fit(X: np.ndarray, y: np.ndarray, w: np.ndarray, l2: float = L2, iterations: int = 30) -> np.ndarray:
+    """Weighted logistic regression. Returns [b, w1, w2, ...]. Newton: at each step the loss is approximated by a
+    parabola and we jump to its minimum; with ~20 signals it converges in a few rounds."""
     X1 = np.hstack([np.ones((len(X), 1)), X])
     beta = np.zeros(X1.shape[1])
-    freno = np.full(X1.shape[1], l2)
-    freno[0] = 0.0  # al término independiente no se le pone freno
-    for _ in range(iteraciones):
+    brake = np.full(X1.shape[1], l2)
+    brake[0] = 0.0  # no brake on the intercept
+    for _ in range(iterations):
         p = 1.0 / (1.0 + np.exp(-np.clip(X1 @ beta, -30, 30)))
-        gradiente = X1.T @ (w * (p - y)) + freno * beta
-        hessiana = np.zeros((X1.shape[1], X1.shape[1]))
-        for i in range(0, len(X1), 500_000):  # por trozos para no llenar la memoria
+        gradient = X1.T @ (w * (p - y)) + brake * beta
+        hessian = np.zeros((X1.shape[1], X1.shape[1]))
+        for i in range(0, len(X1), 500_000):  # in chunks so memory doesn't fill up
             t = X1[i:i + 500_000]
-            hessiana += (t * (w[i:i + 500_000] * p[i:i + 500_000] * (1 - p[i:i + 500_000]))[:, None]).T @ t
-        paso = np.linalg.solve(hessiana + np.diag(freno), gradiente)
-        beta -= paso
-        if np.max(np.abs(paso)) < 1e-6:
+            hessian += (t * (w[i:i + 500_000] * p[i:i + 500_000] * (1 - p[i:i + 500_000]))[:, None]).T @ t
+        step = np.linalg.solve(hessian + np.diag(brake), gradient)
+        beta -= step
+        if np.max(np.abs(step)) < 1e-6:
             break
     return beta
 
 
-def auc(puntos: np.ndarray, y: np.ndarray) -> float:
-    """Probabilidad de que una fila comprada puntúe más que una no comprada (0,5 = azar, 1 = perfecto)."""
-    orden = np.argsort(puntos, kind="mergesort")
-    rangos = np.empty(len(puntos))
-    rangos[orden] = np.arange(1, len(puntos) + 1)
+def auc(points: np.ndarray, y: np.ndarray) -> float:
+    """Probability that a bought row scores higher than a non-bought one (0.5 = chance, 1 = perfect)."""
+    ordering = np.argsort(points, kind="mergesort")
+    ranks = np.empty(len(points))
+    ranks[ordering] = np.arange(1, len(points) + 1)
     pos = y == 1
     n1, n0 = pos.sum(), (~pos).sum()
-    return float((rangos[pos].sum() - n1 * (n1 + 1) / 2) / (n1 * n0))
+    return float((ranks[pos].sum() - n1 * (n1 + 1) / 2) / (n1 * n0))
 
 
-# ---------------------------------------------------------------- principal
+# ---------------------------------------------------------------- main
 def main() -> None:
-    visitas = _visitas_entreno()
-    compras = sum(bool(v["purchased"]) for v in visitas)
-    print(f"Entrenamiento {INICIO} -> {CORTE}: {len(visitas)} visitas ({compras} con compra)")
-    estado = _estado_entreno()
-    X, y, w, _, fuera = _matriz(visitas, estado, ponderar=True)
-    print(f"Descartadas {fuera} visitas cuya compra era una recompra; quedan {int(y.sum())} compras para aprender")
-    media = X[:, :len(NOMBRES)].mean(axis=0)
-    desv = X[:, :len(NOMBRES)].std(axis=0) + 1e-9
+    visits = _training_visits()
+    purchases = sum(bool(v["purchased"]) for v in visits)
+    print(f"Training {START} -> {CUTOFF}: {len(visits)} visits ({purchases} with a purchase)")
+    state = _training_state()
+    X, y, w, _, outside = _matrix(visits, state, weigh=True)
+    print(f"Dropped {outside} visits whose purchase was a repurchase; {int(y.sum())} purchases left to learn from")
+    avg = X[:, :len(NAMES)].mean(axis=0)
+    spread = X[:, :len(NAMES)].std(axis=0) + 1e-9
     Xn = X.copy()
-    Xn[:, :len(NOMBRES)] = (X[:, :len(NOMBRES)] - media) / desv  # misma escala: coeficientes comparables
-    beta = entrenar(Xn, y, w)
+    Xn[:, :len(NAMES)] = (X[:, :len(NAMES)] - avg) / spread  # same scale: comparable coefficients
+    beta = fit(Xn, y, w)
 
-    print(f"\n{'señal':<24}{'coef.':>8}   ×odds   qué es")
-    for (nombre, texto), b in zip(SENALES + [(p, "") for p in PUESTOS], beta[1:]):
-        print(f"{nombre:<24}{b:>8.3f}  {math.exp(b):>6.2f}   {texto}")
+    print(f"\n{'signal':<24}{'coef.':>8}   x odds  what it is")
+    for (name, txt), b in zip(SIGNALS + [(p, "") for p in SLOTS], beta[1:]):
+        print(f"{name:<24}{b:>8.3f}  {math.exp(b):>6.2f}   {txt}")
 
-    modelo = {"inicio": INICIO, "corte": CORTE, "senales": NOMBRES, "media": media.tolist(),
-              "desviacion": desv.tolist(), "termino": float(beta[0]),
-              "coeficientes": beta[1:1 + len(NOMBRES)].tolist(), "puestos": beta[1 + len(NOMBRES):].tolist()}
-    (DATA / "puntuacion.json").write_text(json.dumps(modelo, indent=1))
+    model = {"start": START, "cutoff": CUTOFF, "signals": NAMES, "avg": avg.tolist(),
+             "deviation": spread.tolist(), "intercept": float(beta[0]),
+             "coefficients": beta[1:1 + len(NAMES)].tolist(), "slots": beta[1 + len(NAMES):].tolist()}
+    (DATA / "scoring.json").write_text(json.dumps(model, indent=1))
 
-    # Diagnóstico del propio modelo (la comparación con otras versiones la hace Evaluación con src/evaluate.py):
-    # AUC en visitas posteriores al corte, con el Estado de ese corte y el mismo filtro de recompras.
-    test = pickle.loads((DATA / f"test_{CORTE}.pkl").read_bytes())
-    est = pickle.loads((DATA / f"estado_{CORTE}.pkl").read_bytes())
-    Xt, yt, _, _, fuera_t = _matriz(test, est, ponderar=False)
-    s = (Xt[:, :len(NOMBRES)] - media) / desv @ beta[1:1 + len(NOMBRES)]  # sin puestos: solo el producto
-    print(f"\nDiagnóstico {CORTE}+: {len(test)} visitas, {fuera_t} descartadas por recompra, {int(yt.sum())} compras")
-    print(f"AUC del modelo (sin puestos): {auc(s, yt):.3f}  (0,5 = azar, 1 = perfecto)")
+    # The model's own diagnostic (comparing with other versions is Evaluation's job, src/evaluate.py):
+    # AUC on visits after the cutoff, with that cutoff's State and the same repurchase filter.
+    test = pickle.loads((DATA / f"test_{CUTOFF}.pkl").read_bytes())
+    est = pickle.loads((DATA / f"state_{CUTOFF}.pkl").read_bytes())
+    Xt, yt, _, _, outside_t = _matrix(test, est, weigh=False)
+    s = (Xt[:, :len(NAMES)] - avg) / spread @ beta[1:1 + len(NAMES)]  # no slots: just the product
+    print(f"\nDiagnostic {CUTOFF}+: {len(test)} visits, {outside_t} dropped as repurchases, {int(yt.sum())} purchases")
+    print(f"Model AUC (no slots): {auc(s, yt):.3f}  (0.5 = chance, 1 = perfect)")
 
 
 if __name__ == "__main__":

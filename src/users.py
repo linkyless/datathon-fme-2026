@@ -1,11 +1,11 @@
-"""Lo que sabemos de cada comprador. Dueño: Ranking.
+"""What we know about each shopper. Owner: Ranking.
 
-Por ahora una sola cosa: qué ha comprado ya cada usuario, para poder filtrarlo en `recommend()`.
-OJO (medición de Evaluación, sáb 14/11): el 61,6 % de las compras del tramo de test son productos que
-el usuario YA HABÍA comprado — la pista oficial ("quien ya compró no lo quiere otra vez") NO se cumple
-ahí, y el filtro hundía el purchase_hit de 0,86 a 0,32. Por eso el filtro se maneja como parámetro
-(interruptor en el servicio / variantes A/B) y no como regla fija: si queda apagado, este campo
-no añade score y su refresco solo sirve para poder encenderlo y medirlo.
+For now just one thing: what each user already bought, so `recommend()` can filter it out.
+Heads up (Evaluation's measurement, Sat 14/11): 61.6 % of the purchases in the test slice are products the user
+HAD ALREADY bought, so the official hint ("whoever already bought it doesn't want it again") does NOT hold there,
+and the filter sank purchase_hit from 0.86 to 0.32. That's why the filter is a parameter (a switch in the service /
+A/B variants) and not a fixed rule: when it's off this field adds no score, and refreshing it only lets us turn it on
+and measure it.
 """
 from __future__ import annotations
 
@@ -13,34 +13,34 @@ import re
 
 from src.rawtree import query
 
-HORAS_EN_VIVO = 24
-"""En vivo, cuántas horas hacia atrás de shop.events se miran para añadir las compras recientes."""
+LIVE_HOURS = 24
+"""Live, how many hours of shop.events we look back to add recent purchases."""
 
-# Una fila por comprador con la lista (sin repetidos) de lo que compró.
+# One row per shopper with the (deduplicated) list of what they bought.
 _SQL = """
-SELECT user_id::String AS user_id, groupUniqArray(product_id::String) AS productos
-FROM {tabla}
-WHERE event_type::String = 'purchase' {filtro}
+SELECT user_id::String AS user_id, groupUniqArray(product_id::String) AS product_ids
+FROM {table}
+WHERE event_type::String = 'purchase' {where_extra}
 GROUP BY user_id"""
 
 
-def _compras(tabla: str, filtro: str) -> dict[str, set[str]]:
-    filas = query(_SQL.format(tabla=tabla, filtro=filtro), timeout=300)
-    return {f["user_id"]: set(f["productos"]) for f in filas}
+def _purchases(table: str, where_extra: str) -> dict[str, set[str]]:
+    rows = query(_SQL.format(table=table, where_extra=where_extra), timeout=300)
+    return {f["user_id"]: set(f["product_ids"]) for f in rows}
 
 
-def cargar_comprados(hasta: str | None = None) -> dict[str, set[str]]:
-    """user_id -> productos que ya compró. No se los volvemos a recomendar.
+def load_bought(until: str | None = None) -> dict[str, set[str]]:
+    """user_id -> products they already bought. We don't recommend them again.
 
-    `hasta` ('YYYY-MM-DD'): usar solo compras con ts < hasta. None = historial + compras en vivo
-    (shop.events de las últimas HORAS_EN_VIVO horas).
+    `until` ('YYYY-MM-DD'): only use purchases with ts < until. None = history + live purchases
+    (shop.events from the last LIVE_HOURS hours).
     """
-    if hasta is not None:
-        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", hasta):
-            raise ValueError(f"hasta debe ser 'YYYY-MM-DD', no {hasta!r}")
-        return _compras("shop.history_events", f"AND ts::DateTime64(3) < '{hasta}'")
-    comprados = _compras("shop.history_events", "")
-    en_vivo = _compras("shop.events", f"AND ts::DateTime64(3) > now() - INTERVAL {HORAS_EN_VIVO} HOUR")
-    for usuario, productos in en_vivo.items():
-        comprados.setdefault(usuario, set()).update(productos)
-    return comprados
+    if until is not None:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", until):
+            raise ValueError(f"until must be 'YYYY-MM-DD', not {until!r}")
+        return _purchases("shop.history_events", f"AND ts::DateTime64(3) < '{until}'")
+    bought = _purchases("shop.history_events", "")
+    live = _purchases("shop.events", f"AND ts::DateTime64(3) > now() - INTERVAL {LIVE_HOURS} HOUR")
+    for user, product_ids in live.items():
+        bought.setdefault(user, set()).update(product_ids)
+    return bought

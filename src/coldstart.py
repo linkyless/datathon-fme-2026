@@ -1,6 +1,6 @@
-"""Arranque en frío: compradores nuevos y productos nuevos. Dueño: Datos y relato.
+"""Cold start: new shoppers and new products. Owner: Data.
 
-D3 y D4 de docs/guias/datos.md. Los embeddings en sí los calcula src/embeddings.py.
+D3 and D4 of the data role guide (docs/archive/guides/data.md). The embeddings themselves come from src/embeddings.py.
 """
 from __future__ import annotations
 
@@ -10,238 +10,236 @@ import time
 
 import numpy as np
 
-from src.catalog import load_popular as cargar_populares
-from src.embeddings import MAX_TEXTOS, PAUSA_S, pedir_embeddings, texto_producto
-from src.rawtree import insert as insertar, query
+from src.catalog import load_popular
+from src.embeddings import MAX_TEXTS, PAUSE_S, request_embeddings, product_text
+from src.rawtree import insert, query
 
-VECINOS = 20
+NEIGHBOURS = 20
 
-# Mezcla de populares_contexto (medición de Alex, sáb: el contexto solo hundía el hit de los
-# fríos 0,60 -> 0,46): los primeros GLOBALES items son los más vendidos de siempre (los conocidos
-# buenos) y el resto de la lista es específica del (device, region). Así el relleno nunca puede
-# rendir peor que los populares generales, y la parte de contexto conserva su señal para la cola.
-GLOBALES_ADELANTE = 20
+# Mixing in popular_by_context (Evaluation's measurement on Sat: context alone sank the cold hit rate from 0.60 to
+# 0.46): the first GLOBALS_FIRST items are the all-time best sellers (the known good ones) and the rest of the list is
+# specific to the (device, region). That way the filler can never do worse than the general best sellers, and the
+# context part keeps its signal for the tail.
+GLOBALS_FIRST = 20
 
 
-def cargar_populares_contexto(hasta: str | None = None) -> dict[tuple[str, str], list[str]]:
-    """(device, region) -> lista de 50 por tipo de comprador, de más a menos (mezclada con los populares generales).
+def load_context_popular(until: str | None = None) -> dict[tuple[str, str], list[str]]:
+    """(device, region) -> list of 50 per kind of shopper, most to least (mixed with the general best sellers).
 
-    `hasta` ('YYYY-MM-DD'): usar solo datos con ts < hasta. None = todo (en vivo).
+    `until` ('YYYY-MM-DD'): only use data with ts < until. None = everything (live).
     """
-    filtro = f" AND ts::DateTime64(3) < '{hasta}'" if hasta else ""
-    # NOTA de coherencia con covisitas.py: aquí cada EVENTO de compra cuenta (una sesión que compra
-    # dos veces suma 2); covisitas cuenta CADA SESIÓN UNA VEZ (el mayor peso). Son señales distintas
-    # a propósito: "cuántas compras de ese tipo de comprador" vs "en cuántas sesiones se relacionan".
-    filas = query(
+    where_extra = f" AND ts::DateTime64(3) < '{until}'" if until else ""
+    # Consistency note with covisits.py: here every purchase EVENT counts (a session that buys twice adds 2);
+    # covisits counts EACH SESSION ONCE (highest weight). They're different signals on purpose: "how many purchases
+    # from that kind of shopper" vs "in how many sessions they're related".
+    rows = query(
         "SELECT device::String d, region::String r, product_id::String pid, count() c "
         "FROM shop.history_events "
-        f"WHERE event_type = 'purchase'{filtro} "
+        f"WHERE event_type = 'purchase'{where_extra} "
         "GROUP BY d, r, pid "
-        "ORDER BY d, r, c DESC, pid "          # pid desempata: orden estable
+        "ORDER BY d, r, c DESC, pid "          # pid breaks ties: stable order
         "LIMIT 50 BY d, r"
     )
-    por_contexto: dict[tuple[str, str], list[str]] = {}
-    for f in filas:
-        por_contexto.setdefault((f["d"], f["r"]), []).append(f["pid"])
+    by_context: dict[tuple[str, str], list[str]] = {}
+    for f in rows:
+        by_context.setdefault((f["d"], f["r"]), []).append(f["pid"])
 
-    # Mezcla segura: los `GLOBALES_ADELANTE` más vendidos de siempre delante,
-    # luego lo específico del contexto, y se completa con más globales hasta 50.
-    globales = cargar_populares(hasta)
-    salida: dict[tuple[str, str], list[str]] = {}
-    for pareja, suyos in por_contexto.items():
-        vistos: set[str] = set()
-        mezclados = globales[:GLOBALES_ADELANTE]
-        vistos.update(mezclados)
-        mezclados += [p for p in suyos if p not in vistos and not vistos.add(p)]
-        mezclados += [p for p in globales if p not in vistos and not vistos.add(p)]
-        salida[pareja] = mezclados[:50]
-    return salida
-
-
-_ATRIBUTOS_CACHE: tuple[float, dict[str, tuple[str, str]]] | None = None
-_VECTORES_CACHE: tuple[float, list[str], np.ndarray] | None = None
+    # Safe mix: the GLOBALS_FIRST all-time best sellers first, then the context-specific ones, and fill up to 50
+    # with more global ones.
+    global_best = load_popular(until)
+    out: dict[tuple[str, str], list[str]] = {}
+    for pair, theirs in by_context.items():
+        viewed: set[str] = set()
+        mixed = global_best[:GLOBALS_FIRST]
+        viewed.update(mixed)
+        mixed += [p for p in theirs if p not in viewed and not viewed.add(p)]
+        mixed += [p for p in global_best if p not in viewed and not viewed.add(p)]
+        out[pair] = mixed[:50]
+    return out
 
 
-def _atributos() -> dict[str, tuple[str, str]]:
-    """product_id -> (category, subcategory) del catálogo, con cache de 10 min."""
-    global _ATRIBUTOS_CACHE
-    if _ATRIBUTOS_CACHE and time.time() - _ATRIBUTOS_CACHE[0] < 600:
-        return _ATRIBUTOS_CACHE[1]
-    filas = query("SELECT product_id::String pid, category::String c, subcategory::String s FROM shop.catalog")
-    atributos = {f["pid"]: (f["c"], f["s"]) for f in filas}
-    _ATRIBUTOS_CACHE = (time.time(), atributos)
-    return atributos
+_ATTRIBUTES_CACHE: tuple[float, dict[str, tuple[str, str]]] | None = None
+_VECTORS_CACHE: tuple[float, list[str], np.ndarray] | None = None
 
 
-def _vectores(hasta: str | None, cache_s: int = 120) -> tuple[list[str], np.ndarray]:
-    """Vectores normalizados de scratch (ids en el orden de las filas de la matriz).
+def _attributes() -> dict[str, tuple[str, str]]:
+    """product_id -> (category, subcategory) from the catalog, cached for 10 min."""
+    global _ATTRIBUTES_CACHE
+    if _ATTRIBUTES_CACHE and time.time() - _ATTRIBUTES_CACHE[0] < 600:
+        return _ATTRIBUTES_CACHE[1]
+    rows = query("SELECT product_id::String pid, category::String c, subcategory::String s FROM shop.catalog")
+    attributes = {f["pid"]: (f["c"], f["s"]) for f in rows}
+    _ATTRIBUTES_CACHE = (time.time(), attributes)
+    return attributes
 
-    La usan cargar_vecinos y cargar_covisitas_heredadas: dentro de un mismo refresco
-    del Estado se decodifican una sola vez (cache corto). `hasta` corta por created_at.
+
+def _vectors(until: str | None, cache_s: int = 120) -> tuple[list[str], np.ndarray]:
+    """Normalised vectors from scratch (ids in the same order as the matrix rows).
+
+    Used by load_neighbours and load_legacy_covisits: within one State refresh they're decoded only once (short
+    cache). `until` cuts by created_at.
     """
-    global _VECTORES_CACHE
-    if _VECTORES_CACHE and time.time() - _VECTORES_CACHE[0] < cache_s:
-        return _VECTORES_CACHE[1], _VECTORES_CACHE[2]
-    filas = query("SELECT product_id::String pid, vec FROM team_29.scratch WHERE tipo = 'emb_v1'")
-    decodificados = {
+    global _VECTORS_CACHE
+    if _VECTORS_CACHE and time.time() - _VECTORS_CACHE[0] < cache_s:
+        return _VECTORS_CACHE[1], _VECTORS_CACHE[2]
+    rows = query("SELECT product_id::String pid, vec FROM team_29.scratch WHERE kind = 'emb_v1'")
+    decoded = {
         f["pid"]: np.frombuffer(base64.b64decode(f["vec"]), dtype=np.float16).astype(np.float32)
-        for f in filas
-        if f["pid"] and f["vec"]  # ignora filas rotas (p. ej. product_id vacío) por si quedara alguna
+        for f in rows
+        if f["pid"] and f["vec"]  # skip broken rows (e.g. empty product_id) just in case
     }
-    if hasta:  # quitar productos creados después del corte (created_at < hasta)
-        creados = {
+    if until:  # drop products created after the cutoff (created_at < until)
+        created = {
             f["product_id"]
-            for f in query(f"SELECT product_id FROM shop.catalog WHERE created_at < '{hasta}'")
+            for f in query(f"SELECT product_id FROM shop.catalog WHERE created_at < '{until}'")
         }
-        decodificados = {pid: v for pid, v in decodificados.items() if pid in creados}
-    ids = list(decodificados)
-    matriz = np.vstack([decodificados[p] for p in ids]) if ids else np.zeros((0, 1), dtype=np.float32)
-    normas = np.linalg.norm(matriz, axis=1, keepdims=True)
-    normas[normas == 0] = 1.0
-    matriz = matriz / normas
-    _VECTORES_CACHE = (time.time(), ids, matriz)
-    return ids, matriz
+        decoded = {pid: v for pid, v in decoded.items() if pid in created}
+    ids = list(decoded)
+    matrix = np.vstack([decoded[p] for p in ids]) if ids else np.zeros((0, 1), dtype=np.float32)
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    matrix = matrix / norms
+    _VECTORS_CACHE = (time.time(), ids, matrix)
+    return ids, matrix
 
 
-def _vecinos_detallados(
-    hasta: str | None = None,
+def _detailed_neighbours(
+    until: str | None = None,
     ids: list[str] | None = None,
-    matriz: np.ndarray | None = None,
+    matrix: np.ndarray | None = None,
 ) -> dict[str, list[tuple[str, float]]]:
-    """product_id -> [(vecino, similitud), ...]: los 20 mejores DENTRO de su subcategoría.
+    """product_id -> [(neighbour, similarity), ...]: the best 20 WITHIN its subcategory.
 
-    Si en su subcategoría hay menos de 20, completa con los de su categoría (lo que pide
-    la D4). Similitud = producto escalar (los vectores están normalizados).
+    If its subcategory has fewer than 20, it fills up with its category (what D4 asks for).
+    Similarity = dot product (the vectors are normalised).
     """
-    if ids is None or matriz is None:
-        ids, matriz = _vectores(hasta)
+    if ids is None or matrix is None:
+        ids, matrix = _vectors(until)
     n = len(ids)
     if not n:
         return {}
-    atributos = _atributos()
-    sub_de = [atributos.get(p, ("", ""))[1] for p in ids]
-    cat_de = [atributos.get(p, ("", ""))[0] for p in ids]
+    attributes = _attributes()
+    sub_of = [attributes.get(p, ("", ""))[1] for p in ids]
+    cat_of = [attributes.get(p, ("", ""))[0] for p in ids]
 
-    salida: dict[str, list[tuple[str, float]]] = {}
-    incompletos: list[int] = []
+    out: dict[str, list[tuple[str, float]]] = {}
+    incomplete: list[int] = []
 
-    # Paso 1: los mejores dentro de la propia subcategoría.
-    por_sub: dict[str, list[int]] = {}
+    # step 1: the best ones within the product's own subcategory
+    by_sub: dict[str, list[int]] = {}
     for i in range(n):
-        por_sub.setdefault(sub_de[i], []).append(i)
-    for grupo in por_sub.values():
-        bloque = matriz[grupo] @ matriz[grupo].T
-        for fila, i_global in enumerate(grupo):
-            pares: list[tuple[int, float]] = []
-            for j in np.argsort(-bloque[fila]):
+        by_sub.setdefault(sub_of[i], []).append(i)
+    for grp in by_sub.values():
+        block = matrix[grp] @ matrix[grp].T
+        for row, i_global in enumerate(grp):
+            pairs: list[tuple[int, float]] = []
+            for j in np.argsort(-block[row]):
                 j = int(j)
-                if j == fila:  # descartarse a sí mismo
+                if j == row:  # skip itself
                     continue
-                pares.append((grupo[j], float(bloque[fila, j])))
-                if len(pares) == VECINOS:
+                pairs.append((grp[j], float(block[row, j])))
+                if len(pairs) == NEIGHBOURS:
                     break
-            salida[ids[i_global]] = [(ids[a], s) for a, s in pares]
-            if len(pares) < VECINOS:
-                incompletos.append(i_global)
+            out[ids[i_global]] = [(ids[a], s) for a, s in pairs]
+            if len(pairs) < NEIGHBOURS:
+                incomplete.append(i_global)
 
-    # Paso 2: quien no llegó a 20 vecinos, completar con la misma categoría.
-    if incompletos:
-        por_cat: dict[str, list[int]] = {}
+    # step 2: whoever didn't reach 20 neighbours gets filled from the same category
+    if incomplete:
+        by_cat: dict[str, list[int]] = {}
         for i in range(n):
-            por_cat.setdefault(cat_de[i], []).append(i)
-        bloques: dict[int, np.ndarray] = {}  # por índice de categoría (tupla cat_de) no hace falta: por grupo
-        for i in incompletos:
-            ya = salida[ids[i]]
-            if len(ya) >= VECINOS:
+            by_cat.setdefault(cat_of[i], []).append(i)
+        blocks: dict[str, np.ndarray] = {}  # one similarity block per category
+        for i in incomplete:
+            already = out[ids[i]]
+            if len(already) >= NEIGHBOURS:
                 continue
-            grupo = por_cat[cat_de[i]]
-            if len(grupo) - 1 <= len(ya):  # ni con toda la categoría llega a 20
+            grp = by_cat[cat_of[i]]
+            if len(grp) - 1 <= len(already):  # not even the whole category gets to 20
                 continue
-            clave = cat_de[i]
-            if clave not in bloques:
-                bloques[clave] = matriz[grupo] @ matriz[grupo].T
-            bloque = bloques[clave]
-            fila = grupo.index(i)
-            puestos = {a for a, _ in ya} | {ids[i]}
-            pares: list[tuple[str, float]] = []
-            for j in np.argsort(-bloque[fila]):
+            key_name = cat_of[i]
+            if key_name not in blocks:
+                blocks[key_name] = matrix[grp] @ matrix[grp].T
+            block = blocks[key_name]
+            row = grp.index(i)
+            slots = {a for a, _ in already} | {ids[i]}
+            pairs: list[tuple[str, float]] = []
+            for j in np.argsort(-block[row]):
                 j = int(j)
-                candidato = ids[grupo[j]]
-                if candidato in puestos:
+                candidate = ids[grp[j]]
+                if candidate in slots:
                     continue
-                pares.append((candidato, float(bloque[fila, j])))
-                if len(ya) + len(pares) == VECINOS:
+                pairs.append((candidate, float(block[row, j])))
+                if len(already) + len(pairs) == NEIGHBOURS:
                     break
-            salida[ids[i]] = ya + pares
-    return salida
+            out[ids[i]] = already + pairs
+    return out
 
 
-def cargar_vecinos(hasta: str | None = None) -> dict[str, list[str]]:
-    """product_id -> los 20 productos con descripción más parecida (por embeddings), del más al menos parecido.
+def load_neighbours(until: str | None = None) -> dict[str, list[str]]:
+    """product_id -> the 20 products with the most similar description (by embeddings), most similar first.
 
-    Vecinos DENTRO de la subcategoría del producto (si faltan, de la categoría); los calcula
-    `_vecinos_detallados` desde team_NN.scratch. `hasta` ('YYYY-MM-DD') corta por created_at
-    para que la evaluación offline no vea productos futuros.
+    Neighbours WITHIN the product's subcategory (topped up from the category if needed); computed by
+    `_detailed_neighbours` from team_NN.scratch. `until` ('YYYY-MM-DD') cuts by created_at so that offline
+    evaluation doesn't see future products.
     """
-    return {pid: [v for v, _ in pares] for pid, pares in _vecinos_detallados(hasta).items()}
+    return {pid: [v for v, _ in pairs] for pid, pairs in _detailed_neighbours(until).items()}
 
 
-def cargar_covisitas_heredadas(
-    hasta: str | None = None,
-    covisitas: dict[str, list[tuple[str, float]]] | None = None,
-    vecinos_det: dict[str, list[tuple[str, float]]] | None = None,
+def load_legacy_covisits(
+    until: str | None = None,
+    covisits: dict[str, list[tuple[str, float]]] | None = None,
+    neighbours_det: dict[str, list[tuple[str, float]]] | None = None,
 ) -> dict[str, list[tuple[str, float]]]:
-    """Co-visitas "prestadas" para productos que aún no tienen (D6, informe punto 8 / ficha T7).
+    """"Borrowed" co-visits for products that don't have any yet (D6, research point 8).
 
-    Para cada producto SIN fila en `covisitas`: la media ponderada por similitud de las
-    co-visitas de sus vecinos (los de `cargar_vecinos`), recortada a 20 pares ordenados.
-    Devuelve un dict con la MISMA forma que `covisitas` (product_id -> [(otro, peso), ...]),
-    listo para mezclarse (decisión con el Operador: campo nuevo `covisitas_heredadas` en el
-    Estado, o mezclarlas dentro de `covisitas`; ranking puede leerlas igual).
+    For every product WITHOUT a row in `covisits`: the similarity-weighted average of its neighbours' co-visits
+    (the ones from `load_neighbours`), cut to 20 sorted pairs. Returns a dict with the SAME shape as `covisits`
+    (product_id -> [(other, weight), ...]), ready to be merged.
     """
-    cov = covisitas or {}
+    cov = covisits or {}
     if not cov:
         return {}
-    det = vecinos_det if vecinos_det is not None else _vecinos_detallados(hasta)
-    heredadas: dict[str, list[tuple[str, float]]] = {}
-    for pid, pares in det.items():
+    det = neighbours_det if neighbours_det is not None else _detailed_neighbours(until)
+    legacy: dict[str, list[tuple[str, float]]] = {}
+    for pid, pairs in det.items():
         if pid in cov:
-            continue  # ya tiene co-visitas reales: no se toca
-        filas = [(v, s) for v, s in pares if v in cov]  # solo vecinos con co-visitas conocidas
-        if not filas:
+            continue  # already has real co-visits: leave it alone
+        rows = [(v, s) for v, s in pairs if v in cov]  # only neighbours with known co-visits
+        if not rows:
             continue
-        total = sum(s for _, s in filas)
+        total = sum(s for _, s in rows)
         if total <= 0:
             continue
-        puntos: dict[str, float] = {}
-        for v, s in filas:
-            for otro, peso in cov[v]:
-                puntos[otro] = puntos.get(otro, 0.0) + s * float(peso)
-        orden = sorted(((o, w / total) for o, w in puntos.items()), key=lambda t: -t[1])[:VECINOS]
-        heredadas[pid] = [(o, round(w, 4)) for o, w in orden if w > 0]
-    return heredadas
+        points: dict[str, float] = {}
+        for v, s in rows:
+            for other, weight in cov[v]:
+                points[other] = points.get(other, 0.0) + s * float(weight)
+        ordering = sorted(((o, w / total) for o, w in points.items()), key=lambda t: -t[1])[:NEIGHBOURS]
+        legacy[pid] = [(o, round(w, 4)) for o, w in ordering if w > 0]
+    return legacy
 
 
-# ---------- Perfiles para R6 (pedido de Leonardo, sáb ~18:50) ----------
-# (1) perfil_comprador: top 3 categorías/subcategorías/marcas y precio mediano por comprador
-#     (history_events + shop.events en vivo). (2) perfil_producto: veces enseñado, veces comprado
-#     y tasa de compra corregida por propensity, desde history_sessions con arrayJoin.
-# Se guardan en team_29.scratch con sello de versión (`gen`) y corte (`hasta`), y se leen con
-# cargar_perfiles(hasta), que solo devuelve filas de su mismo corte (respetar `hasta` = no mirar futuro).
+# ---------- Profiles for R6 (requested by Ranking, Sat ~18:50) ----------
+# (1) shopper profile: top 3 categories/subcategories/brands and median price per shopper
+#     (history_events + live shop.events). (2) product profile: times shown, times bought and propensity-corrected
+#     purchase rate, from history_sessions with arrayJoin.
+# Stored in team_29.scratch with a version stamp (`gen`) and a cutoff (`until`), and read with load_profiles(until),
+# which only returns rows of the same cutoff (respecting `until` = never looking at the future).
 
-PERFIL_COMPRADOR = "perfil_comprador_v2"
-PERFIL_PRODUCTO = "perfil_producto_v2"
-# v1 de estos tipos quedó CORRUPTA en scratch (top-3 reducido a caracteres, sáb ~18:00) y no se puede
-# borrar sin permiso admin: al subir a v2, el cargador ignora automáticamente todas las filas v1.
-PERFIL_GEN_MIN = 1800  # segundos: no reconstruir si lo último en scratch es más reciente
+SHOPPER_PROFILE = "shopper_profile_v2"
+PRODUCT_PROFILE = "product_profile_v2"
+# v1 of these kinds got CORRUPTED in scratch (top-3 reduced to characters, Sat ~18:00) and can't be deleted without
+# admin rights: moving to v2 makes the loader ignore every v1 row automatically.
+PROFILE_GEN_MIN = 1800  # seconds: don't rebuild if the latest thing in scratch is more recent than this
 
 
-def _union_en_vivo(hasta: str | None) -> str:
-    """shop.events solo cuenta EN VIVO (hasta=None): con corte, serían datos del futuro.
+def _live_union(until: str | None) -> str:
+    """shop.events only counts LIVE (until=None): with a cutoff it'd be future data.
 
-    Los eventos no traen categoría: la del catálogo se une aquí también.
+    Events don't carry the category: the catalog one is joined here too.
     """
-    if hasta:
+    if until:
         return ""
     return ("UNION ALL SELECT e2.user_id::String AS u, c2.c AS c, c2.s AS s, c2.b AS b, "
             "e2.price_eur::Float64 AS pr "
@@ -252,18 +250,22 @@ def _union_en_vivo(hasta: str | None) -> str:
             "WHERE e2.event_type::String = 'purchase'")
 
 
-def _construir_perfil_comprador(hasta: str | None) -> dict[str, dict]:
-    """user_id -> {"categorias": [3], "subcategorias": [3], "marcas": [3], "precio_mediano": €, "compras": n}.
+def _empty_profile() -> dict:
+    return {"categories": [], "subcategories": [], "brands": [], "median_price": 0.0, "purchases": 0}
 
-    Top-3 por dimensión con LIMIT 3 BY (probado; los trucos con groupArray de tuplas llegan
-    achatados por el camino Dynamic y estropean el perfil).
+
+def _build_shopper_profile(until: str | None) -> dict[str, dict]:
+    """user_id -> {"categories": [3], "subcategories": [3], "brands": [3], "median_price": EUR, "purchases": n}.
+
+    Top 3 per dimension with LIMIT 3 BY (tested; the groupArray-of-tuples tricks come back flattened through the
+    Dynamic path and break the profile).
     """
-    filtro = f" WHERE e.event_type::String = 'purchase' AND e.ts::DateTime64(3) < '{hasta}'" if hasta \
+    where_extra = f" WHERE e.event_type::String = 'purchase' AND e.ts::DateTime64(3) < '{until}'" if until \
         else " WHERE e.event_type::String = 'purchase'"
-    union = _union_en_vivo(hasta)
-    dim_map = (("c", "categorias"), ("s", "subcategorias"), ("b", "marcas"))
+    union = _live_union(until)
+    dim_map = (("c", "categories"), ("s", "subcategories"), ("b", "brands"))
     top: dict[str, dict] = {}
-    for dim, clave in dim_map:
+    for dim, key_name in dim_map:
         sql = f"""
         SELECT u, v, n FROM (
           SELECT u, {dim} AS v, count() AS n FROM (
@@ -272,91 +274,89 @@ def _construir_perfil_comprador(hasta: str | None) -> dict[str, dict]:
             INNER JOIN (SELECT product_id::String pid, category::String c,
                                subcategory::String s, brand::String b FROM shop.catalog) c
                       ON e.product_id::String = c.pid
-            {filtro}
+            {where_extra}
             {union}
           ) GROUP BY u, v ORDER BY n DESC
         ) LIMIT 3 BY u"""
         for f in query(sql, timeout=600):
-            d = top.setdefault(f["u"], {"categorias": [], "subcategorias": [], "marcas": [],
-                                        "precio_mediano": 0.0, "compras": 0})
-            d[clave].append(str(f["v"]))  # las filas llegan ya de más a menos compras por comprador
-    filas_med = query(f"""
-        SELECT u, round(quantile(0.5)(pr), 2) AS med, count() AS compras FROM (
+            d = top.setdefault(f["u"], _empty_profile())
+            d[key_name].append(str(f["v"]))  # rows already come sorted by purchases per shopper
+    rows_med = query(f"""
+        SELECT u, round(quantile(0.5)(pr), 2) AS med, count() AS purchases FROM (
           SELECT e.user_id::String AS u, c.c AS c, c.s AS s, c.b AS b, e.price_eur::Float64 AS pr
           FROM shop.history_events e
           INNER JOIN (SELECT product_id::String pid, category::String c,
                              subcategory::String s, brand::String b FROM shop.catalog) c
                     ON e.product_id::String = c.pid
-          {filtro}
+          {where_extra}
           {union}
         ) GROUP BY u""", timeout=600)
-    for f in filas_med:
-        d = top.setdefault(f["u"], {"categorias": [], "subcategorias": [], "marcas": [],
-                                    "precio_mediano": 0.0, "compras": 0})
-        d["precio_mediano"] = float(f["med"] or 0)
-        d["compras"] = int(f["compras"])
+    for f in rows_med:
+        d = top.setdefault(f["u"], _empty_profile())
+        d["median_price"] = float(f["med"] or 0)
+        d["purchases"] = int(f["purchases"])
     return top
 
 
-def _construir_perfil_producto(hasta: str | None) -> dict[str, dict]:
-    """product_id -> {"ensenado": n, "comprado": n, "tasa_ips": tasa corregida por propensity}."""
-    filtro = f" WHERE ts::DateTime64(3) < '{hasta}'" if hasta else ""
+def _build_product_profile(until: str | None) -> dict[str, dict]:
+    """product_id -> {"shown_n": n, "was_bought": n, "ips_rate": propensity-corrected rate}."""
+    where_extra = f" WHERE ts::DateTime64(3) < '{until}'" if until else ""
     sql = f"""
-    SELECT p, count() AS ensenado, countIf(p = pc) AS comprado,
-           round(if(sum(w) > 0, sum(wc) / sum(w), 0), 4) AS tasa_ips
+    SELECT p, count() AS shown_n, countIf(p = pc) AS was_bought,
+           round(if(sum(w) > 0, sum(wc) / sum(w), 0), 4) AS ips_rate
     FROM (
       SELECT z.1 AS p, purchased::String AS pc,
              if(z.2::Float64 > 0, 1.0 / z.2::Float64, 0) AS w,
              if(z.2::Float64 > 0 AND z.1 = pc, 1.0 / z.2::Float64, 0) AS wc
       FROM (SELECT arrayJoin(arrayZip(shown, propensity)) AS z, purchased::String AS purchased
-            FROM shop.history_sessions{filtro})
+            FROM shop.history_sessions{where_extra})
     )
     GROUP BY p"""
-    return {f["p"]: {"ensenado": int(f["ensenado"]), "comprado": int(f["comprado"]),
-                     "tasa_ips": float(f["tasa_ips"])} for f in query(sql, timeout=600)}
+    return {f["p"]: {"shown_n": int(f["shown_n"]), "was_bought": int(f["was_bought"]),
+                     "ips_rate": float(f["ips_rate"])} for f in query(sql, timeout=600)}
 
 
-def construir_perfiles(hasta: str | None = None, forzar: bool = False) -> tuple[dict, dict]:
-    """Calcula los perfiles de R6, los sube a team_29.scratch y los devuelve.
+def build_profiles(until: str | None = None, force: bool = False) -> tuple[dict, dict]:
+    """Computes the R6 profiles, uploads them to team_29.scratch and returns them.
 
-    Cada fila lleva `gen` (sello de versión) y `hasta` (el corte: "LIVE" si es None): el
-    cargador solo lee filas de su mismo corte. Si lo último subido es de hace
-    < PERFIL_GEN_MIN segundos, no recalcula (scratch no crece sin control) salvo `forzar=True`.
+    Every row carries `gen` (version stamp) and `until` (the cutoff: "LIVE" if None): the loader only reads rows of
+    its own cutoff. If the last upload is less than PROFILE_GEN_MIN seconds old it doesn't recompute (so scratch
+    doesn't grow out of control) unless `force=True`.
     """
-    h = hasta or "LIVE"
+    h = until or "LIVE"
     try:
-        ultimo = query(f"SELECT max(gen) AS g FROM team_29.scratch "
-                       f"WHERE tipo = '{PERFIL_COMPRADOR}' AND hasta::String = '{h}'")[0]["g"] or 0
-    except RuntimeError:  # scratch aún sin estas columnas (primera vez)
-        ultimo = 0
-    if not forzar and time.time() - ultimo < PERFIL_GEN_MIN:
-        return cargar_perfiles(hasta)
+        last = query(f"SELECT max(gen) AS g FROM team_29.scratch "
+                     f"WHERE kind = '{SHOPPER_PROFILE}' AND until::String = '{h}'")[0]["g"] or 0
+    except RuntimeError:  # scratch doesn't have these columns yet (first time)
+        last = 0
+    if not force and time.time() - last < PROFILE_GEN_MIN:
+        return load_profiles(until)
 
     gen = int(time.time())
-    comprador = _construir_perfil_comprador(hasta)
-    producto = _construir_perfil_producto(hasta)
-    filas = [{"tipo": PERFIL_COMPRADOR, "hasta": h, "gen": gen, "user_id": u, **datos}
-             for u, datos in comprador.items()]
-    filas += [{"tipo": PERFIL_PRODUCTO, "hasta": h, "gen": gen, "product_id": p, **datos}
-              for p, datos in producto.items()]
-    for i in range(0, len(filas), 500):
-        insertar("scratch", filas[i : i + 500])
-    print(f"perfiles subidos a scratch: {len(comprador)} compradores + {len(producto)} productos (gen {gen})")
-    return comprador, producto
+    shopper = _build_shopper_profile(until)
+    product = _build_product_profile(until)
+    rows = [{"kind": SHOPPER_PROFILE, "until": h, "gen": gen, "user_id": u, **payload}
+            for u, payload in shopper.items()]
+    rows += [{"kind": PRODUCT_PROFILE, "until": h, "gen": gen, "product_id": p, **payload}
+             for p, payload in product.items()]
+    for i in range(0, len(rows), 500):
+        insert("scratch", rows[i : i + 500])
+    print(f"profiles uploaded to scratch: {len(shopper)} shoppers + {len(product)} products (gen {gen})")
+    return shopper, product
 
 
-def _por_gen(filas: list[dict], clave: str) -> dict[str, dict]:
-    """De las filas de scratch, se queda con la de mayor `gen` por clave (la más reciente)."""
-    mejor: dict[str, dict] = {}
-    for f in filas:
-        k = str(f[clave])
-        if k not in mejor or int(f.get("gen") or 0) > int(mejor[k].get("gen") or 0):
-            mejor[k] = f
-    return mejor
+def _by_gen(rows: list[dict], key_name: str) -> dict[str, dict]:
+    """Out of the scratch rows, keeps the one with the highest `gen` per key (the latest)."""
+    best: dict[str, dict] = {}
+    for f in rows:
+        k = str(f[key_name])
+        if k not in best or int(f.get("gen") or 0) > int(best[k].get("gen") or 0):
+            best[k] = f
+    return best
 
 
-def _como_lista(v) -> list[str]:
-    """Las columnas Dynamic a veces traen la lista tal cual y a veces texto JSON."""
+def _as_list(v) -> list[str]:
+    """Dynamic columns sometimes return the list as is and sometimes as JSON text."""
     if isinstance(v, list):
         return [str(x) for x in v]
     if isinstance(v, str) and v.startswith("["):
@@ -364,92 +364,92 @@ def _como_lista(v) -> list[str]:
     return []
 
 
-def cargar_perfiles(hasta: str | None = None) -> tuple[dict, dict]:
-    """Lee de team_29.scratch los perfiles de R6 de ESTE corte.
+def load_profiles(until: str | None = None) -> tuple[dict, dict]:
+    """Reads the R6 profiles of THIS cutoff from team_29.scratch.
 
-    Devuelve (perfil_comprador, perfil_producto):
-    - user_id -> {"categorias": [3], "subcategorias": [3], "marcas": [3], "precio_mediano": €, "compras": n}
-    - product_id -> {"ensenado": n, "comprado": n, "tasa_ips": tasa corregida}
-    Si aún no se han construido (python -m src.coldstart los construye, o el servicio), devuelve ({}, {}).
+    Returns (shopper_profiles, product_profiles):
+    - user_id -> {"categories": [3], "subcategories": [3], "brands": [3], "median_price": EUR, "purchases": n}
+    - product_id -> {"shown_n": n, "was_bought": n, "ips_rate": corrected rate}
+    If they haven't been built yet (python -m src.coldstart builds them, or the service does), returns ({}, {}).
     """
-    h = hasta or "LIVE"  # "" en Dynamic se comportaba mal en el WHERE: marcador explícito
+    h = until or "LIVE"  # "" in a Dynamic column behaved badly in the WHERE: explicit marker
     try:
-        filas = query(f"SELECT user_id::String AS user_id, gen, categorias, subcategorias, marcas, "
-                      f"precio_mediano, compras FROM team_29.scratch "
-                      f"WHERE tipo = '{PERFIL_COMPRADOR}' AND hasta::String = '{h}'")
-    except RuntimeError:  # primera vez: scratch aún no tiene estas columnas
-        filas = []
-    comprador = {u: {"categorias": _como_lista(f.get("categorias")),
-                     "subcategorias": _como_lista(f.get("subcategorias")),
-                     "marcas": _como_lista(f.get("marcas")),
-                     "precio_mediano": float(f.get("precio_mediano") or 0),
-                     "compras": int(f.get("compras") or 0), "gen": int(f.get("gen") or 0)}
-                 for u, f in _por_gen(filas, "user_id").items()}
+        rows = query(f"SELECT user_id::String AS user_id, gen, categories, subcategories, brands, "
+                     f"median_price, purchases FROM team_29.scratch "
+                     f"WHERE kind = '{SHOPPER_PROFILE}' AND until::String = '{h}'")
+    except RuntimeError:  # first time: scratch doesn't have these columns yet
+        rows = []
+    shopper = {u: {"categories": _as_list(f.get("categories")),
+                   "subcategories": _as_list(f.get("subcategories")),
+                   "brands": _as_list(f.get("brands")),
+                   "median_price": float(f.get("median_price") or 0),
+                   "purchases": int(f.get("purchases") or 0), "gen": int(f.get("gen") or 0)}
+               for u, f in _by_gen(rows, "user_id").items()}
     try:
-        filas_p = query(f"SELECT product_id::String AS product_id, gen, ensenado, comprado, tasa_ips "
-                        f"FROM team_29.scratch WHERE tipo = '{PERFIL_PRODUCTO}' AND hasta::String = '{h}'")
+        rows_p = query(f"SELECT product_id::String AS product_id, gen, shown_n, was_bought, ips_rate "
+                       f"FROM team_29.scratch WHERE kind = '{PRODUCT_PROFILE}' AND until::String = '{h}'")
     except RuntimeError:
-        filas_p = []
-    producto = {p: {"ensenado": int(f.get("ensenado") or 0), "comprado": int(f.get("comprado") or 0),
-                    "tasa_ips": float(f.get("tasa_ips") or 0), "gen": int(f.get("gen") or 0)}
-                for p, f in _por_gen(filas_p, "product_id").items()}
-    return comprador, producto
+        rows_p = []
+    product = {p: {"shown_n": int(f.get("shown_n") or 0), "was_bought": int(f.get("was_bought") or 0),
+                   "ips_rate": float(f.get("ips_rate") or 0), "gen": int(f.get("gen") or 0)}
+               for p, f in _by_gen(rows_p, "product_id").items()}
+    return shopper, product
 
 
 def main() -> None:
-    """python -m src.coldstart: construye y sube los perfiles de R6 (en vivo, hasta=None)."""
-    comprador, producto = construir_perfiles(None, forzar=True)
-    print(f"perfil comprador: {len(comprador)} | perfil producto: {len(producto)}")
+    """python -m src.coldstart: builds and uploads the R6 profiles (live, until=None)."""
+    shopper, product = build_profiles(None, force=True)
+    print(f"shopper profiles: {len(shopper)} | product profiles: {len(product)}")
 
 
-def embeber_nuevos() -> int:
-    """Embebe los 'new_product' de catalog_updates que aún no están en scratch y los sube.
+def embed_new() -> int:
+    """Embeds the 'new_product's from catalog_updates that aren't in scratch yet and uploads them.
 
-    Devuelve cuántos productos nuevos se embeberon. El servicio (Operador) la llama
-    cada ~5 minutos para que los productos nuevos tengan vecinos en caliente.
+    Returns how many new products were embedded. The service calls it every ~5 minutes so that new products get
+    neighbours while they're fresh.
     """
-    nuevos = [
+    new_ids = [
         f
         for f in query(
             "SELECT product_id::String pid, category, subcategory, brand, description, ts "
             "FROM shop.catalog_updates WHERE change = 'new_product' "
-            "ORDER BY ts::DateTime64(3) ASC"  # un producto puede tener varias filas: gana la última
+            "ORDER BY ts::DateTime64(3) ASC"  # a product can have several rows: the last one wins
         )
     ]
-    ultimo: dict[str, dict] = {}
-    for f in nuevos:
-        ultimo[f["pid"]] = f
-    ya_estan = {
+    last: dict[str, dict] = {}
+    for f in new_ids:
+        last[f["pid"]] = f
+    already_in = {
         f["product_id"]
-        for f in query("SELECT product_id::String product_id FROM team_29.scratch WHERE tipo = 'emb_v1'")
+        for f in query("SELECT product_id::String product_id FROM team_29.scratch WHERE kind = 'emb_v1'")
     }
-    pendientes = [f for pid, f in ultimo.items() if pid and pid not in ya_estan]
-    if not pendientes:
+    pending = [f for pid, f in last.items() if pid and pid not in already_in]
+    if not pending:
         return 0
 
-    filas_out = []
-    for i in range(0, len(pendientes), MAX_TEXTOS):
-        lote = pendientes[i : i + MAX_TEXTOS]
-        vectores = pedir_embeddings([texto_producto(f) for f in lote])
-        for f, v in zip(lote, vectores):
+    rows_out = []
+    for i in range(0, len(pending), MAX_TEXTS):
+        batch = pending[i : i + MAX_TEXTS]
+        vectors = request_embeddings([product_text(f) for f in batch])
+        for f, v in zip(batch, vectors):
             vec = np.asarray(v, dtype=np.float32)
-            norma = float(np.linalg.norm(vec)) or 1.0
-            vec = vec / norma
-            filas_out.append((f, vec))
-        if i + MAX_TEXTOS < len(pendientes):
-            time.sleep(PAUSA_S)
-    insertar(
+            nrm = float(np.linalg.norm(vec)) or 1.0
+            vec = vec / nrm
+            rows_out.append((f, vec))
+        if i + MAX_TEXTS < len(pending):
+            time.sleep(PAUSE_S)
+    insert(
         "scratch",
         [
             {
-                "tipo": "emb_v1",
+                "kind": "emb_v1",
                 "product_id": f["pid"],
                 "vec": base64.b64encode(v.astype(np.float16).tobytes()).decode("ascii"),
             }
-            for f, v in filas_out
+            for f, v in rows_out
         ],
     )
-    return len(filas_out)
+    return len(rows_out)
 
 
 if __name__ == "__main__":

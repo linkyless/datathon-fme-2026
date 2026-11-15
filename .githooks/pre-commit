@@ -1,21 +1,21 @@
 #!/bin/sh
-# Bloquea commits que llevan claves, el .env o datos. Se activa una vez con:
+# Blocks commits that contain keys, the .env file or data. Enable it once with:
 #   git config core.hooksPath .githooks
-fallo=0
+failed=0
 for f in $(git diff --cached --name-only --diff-filter=ACM); do
   case "$f" in
     .env|*/.env|*.key)
-      echo "BLOQUEADO: $f es un archivo de claves. Sácalo con: git restore --staged $f"; fallo=1 ;;
+      echo "BLOCKED: $f is a key file. Unstage it with: git restore --staged $f"; failed=1 ;;
     *.csv|*.parquet|*.pkl|*.joblib|*.npy)
-      echo "BLOQUEADO: $f parece datos o un modelo. Los datos no se suben."; fallo=1 ;;
+      echo "BLOCKED: $f looks like data or a model. Data does not go in the repo."; failed=1 ;;
   esac
 done
 if git diff --cached -U0 | grep '^+' | grep -v '^+++' \
    | grep -Eq 'rt_[A-Za-z0-9]{12,}|(API_KEY|api_key|apiKey|Bearer)[^A-Za-z0-9{]{1,4}[A-Za-z0-9_.-]{24,}'; then
-  echo "BLOQUEADO: parece que hay una clave en el código. Muévela al .env."; fallo=1
+  echo "BLOCKED: looks like there is a key in the code. Move it to .env."; failed=1
 fi
-if [ $fallo -ne 0 ]; then
-  echo "Commit cancelado. Si es un falso positivo, avisa al equipo antes de saltártelo."
+if [ $failed -ne 0 ]; then
+  echo "Commit cancelled. If it is a false positive, tell the team before skipping the hook."
   exit 1
 fi
 exit 0

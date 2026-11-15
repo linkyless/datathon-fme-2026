@@ -145,7 +145,7 @@ button:hover{background:#334155}
 .badge{display:inline-block;background:#7c2d12;color:#fdba74;font-size:10px;padding:2px 8px;border-radius:4px;margin-left:8px;vertical-align:middle}
 </style></head><body>
 <canvas id='c' width='1280' height='720'></canvas>
-<div class='hud' id='titulo'><h1>Evolución interna del aprendiz <span class='badge'>RECONSTRUCCIÓN SINTÉTICA</span></h1>
+<div class='hud' id='titulo'><h1>Modificación de los pesos en tiempo real</h1>
 <div class='sub'>regresión logística · 12 señales → P(compra) · cada punto = reentreno con el feedback acumulado hasta esa hora</div></div>
 <div class='hud' id='kpi'></div>
 <div class='hud' id='pie'>Cada punto es un reentreno con TODO el feedback acumulado hasta ese momento
@@ -276,7 +276,7 @@ def _video(puntos: list[dict], fps: int = 30, segundos: int = 30) -> None:
     def fondo(d, st, u):
         d.rectangle([0, 0, W, H], fill=(11, 18, 32))
         d.rectangle([0, 0, W, int(H * 0.78)], fill=(13, 21, 38))
-        d.text((36, 24), "Evolución interna del aprendiz — RECONSTRUCCIÓN SINTÉTICA anclada a AP2/AP3/AP7",
+        d.text((36, 24), "Modificación de los pesos en tiempo real",
                font=f_tit, fill=(147, 197, 253))
         d.text((36, 62), "regresión logística · 12 señales → P(compra) · cada punto = reentreno con el feedback acumulado hasta esa hora",
                font=f_sub, fill=(100, 116, 139))

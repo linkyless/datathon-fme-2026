@@ -25,5 +25,5 @@ __pycache__/
 CLAUDE.local.md
 .claude/settings.local.json
 
-# Copias locales de páginas web (las diapositivas están resumidas en docs/apertura.md)
+# Copias locales de páginas web (las diapositivas están resumidas en docs/opening.md)
 *.html

@@ -1,5 +1,7 @@
 # Experimentos
 
+> Logbook of the event, kept as written (in Spanish, with the original Spanish module and file names: `src/aprendiz.py` is now `src/learner.py`, `docs/estado/` is `docs/archive/status/`, etc.; full mapping in the README). Rows are only ever appended.
+
 Una fila por medición. Solo números que salgan de código ejecutado. `model_version` = lo que enviamos a submissions.
 
 ## Qué es cada versión (el nombre público es solo `e-samen-vN`: lo que hace se apunta AQUÍ, no en el nombre)

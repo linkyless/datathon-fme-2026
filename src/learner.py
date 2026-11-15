@@ -165,7 +165,7 @@ GROUPS["h"] = ["cobuy_today", "cf_hist"]
   - `cf_hist` uses each known shopper's 60 days of purchases (item-to-item collaborative filtering).
   - Also TWO regressions are trained, one only with responses to new shoppers and one with known ones
     (`--only new` / `--only known`); the service uses one or the other depending on `is_new_user`.
-    python -m src.learner --name aphc --without o1,o2,h                                 # control (= AP7 retrained)
+    python -m src.learner --name aphc --without o1,o2,h,x                               # control (= AP7 retrained)
     python -m src.learner --no-download --name aph1_n --without o1,o2 --only new        # new-shopper specialist
     python -m src.learner --no-download --name aph1_c --without o1,o2 --only known      # known-shopper specialist"""
 N_COBUY, N_CF, CF_NEIGHBORS, TODAY_SOURCES = 15, 20, 30, 8

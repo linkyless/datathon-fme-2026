@@ -15,7 +15,8 @@
       "Bash(git diff:*)",
       "Bash(git log:*)",
       "Bash(git pull --rebase)",
-      "Bash(python -m src.validar)"
+      "Bash(python -m src.validate)",
+      "Bash(python -m src.local_test)"
     ]
   }
 }

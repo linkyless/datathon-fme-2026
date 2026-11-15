@@ -44,6 +44,10 @@ AP7 (sáb noche) = el mismo modelo con una señal más, `misma_sub`. Para un A/B
     python -m src.aprendiz --sin-descarga --nombre ap7c --sin misma_sub   # control: mismos datos, sin ella
     aprendiz.recomendar(peticion, mundo, Modelo.cargar("ap7"), disponibles, forzar={"misma_sub": 3.0})   # brazo fuerte
 
+AP8 (dom 06:00) = modelo de ELECCIÓN: aprende "de los 10 enseñados, cuál se eligió" (ver `GRUPOS["x"]`):
+    python -m src.aprendiz --nombre ap8 --eleccion --sin o1,o2            # elección + señales nuevas (grupo x)
+    python -m src.aprendiz --sin-descarga --nombre ap8c --sin o1,o2,h,x   # control: el modelo por producto de AP7
+
 Exploración (`recomendar(..., explorar=True)`): en la mitad de las peticiones (EXPLORAR_FRACCION, elegidas por el
 request_id) los huecos 9 y 10 dejan de ser los del modelo y enseñan un producto NUEVO y uno de FUERA de las listas
 de mejores, los dos de una categoría que le interesa a ese comprador. Para qué: hoy solo sabemos qué pasa con lo
@@ -96,6 +100,12 @@ HUECO_NUEVO, HUECO_RESTO = 8, 9
 INTENTOS_EXPLORAR = 30
 """Cada cuánto se recalculan las listas de mejores por categoría (los números por producto van cambiando)."""
 
+CON_NUEVO = ["carrito_hoy", "visto_sesion", "afin_cat", "afin_sub", "misma_cat", "pop", "tasa", "misma_sub"]
+"""APO1: señales que tienen un peso distinto en compradores nuevos (is_new_user). Para un nuevo, el peso es el de la
+señal + el de su `n_`. Faltan carrito_antiguo y ya_comprado: un comprador nuevo no tiene historial."""
+PSEUDO_TIPO = 500.0
+"""Suavizado de la tasa de un tipo o de una marca (en vistas del historial): con pocas vistas se acerca a la media."""
+
 VISTA, CARRITO, COMPRA = 0, 1, 2
 _TIPO = {"view": VISTA, "add_to_cart": CARRITO, "purchase": COMPRA}
 
@@ -112,6 +122,22 @@ SENALES = [
     ("sin_vistas", "la petición no trae recent_views (home). No cambia el orden: ajusta el nivel"),
     ("nuevo", "comprador nuevo (is_new_user). No cambia el orden: ajusta el nivel"),
     ("misma_sub", "misma subcategoría que lo último visto, en productos que NO son suyos (ni carrito ni visto)"),
+    ("tasa_tipo", "ORGÁNICO: log de compras por vista de los productos de su TIPO (subcategoría y tramo de precio)"),
+    ("pop_tipo", "ORGÁNICO: log de lo que vende de media un producto de su tipo"),
+    ("tasa_marca", "ORGÁNICO: log de compras por vista de su marca"),
+] + [("n_" + n, f"solo en compradores NUEVOS: corrección del peso de {n}") for n in CON_NUEVO] + [
+    ("cocompra_hoy", "HOY: quien miró lo que este comprador ha mirado, ¿cuánto acabó comprando este producto? (shop.events)"),
+    ("cf_hist", "HISTORIAL: quien compró lo que este comprador compró, ¿cuánto compró también este producto? (60 días)"),
+    ("gusto_hist", "HISTORIAL: gusto personal (factorización de los carritos y compras de 60 días): cuánto encaja con ESE comprador"),
+    ("ctx_dev_sub", "CONTEXTO: cuánto más o menos se compra su subcategoría desde ese dispositivo (log, compras de 60 días)"),
+    ("parte_ses_cat", "parte de recent_views que es de la categoría del producto"),
+    ("prod_nuevo", "producto NUEVO: sin actividad en el historial de 60 días (sus números propios aún no dicen nada)"),
+    ("precio_rel_sub", "log del precio dividido por el precio mediano de su subcategoría"),
+    ("vistas_hoy_u", "log(1 + veces que ese comprador ha mirado hoy el producto)"),
+    ("co_hay", "cocompra_hoy > 0: alguien que miró hoy lo mismo que este comprador acabó comprando el producto (sí/no)"),
+    ("cf_hay", "cf_hist > 0: alguien que compró lo mismo que este comprador compró también el producto (sí/no)"),
+    ("co_raiz", "raíz de cocompra_hoy: deja que esa señal suba deprisa al principio y luego se aplane"),
+    ("cf_raiz", "raíz de cf_hist: ídem"),
 ]
 """Pocas a propósito. Probadas y quitadas el sáb 14/11 porque no mejoraban la validación (cada una movía el error
 menos de un 0,1 %): es lo último visto, lo miró hoy fuera de la sesión, dispositivo, y "sabemos algo del comprador"
@@ -124,6 +150,62 @@ Las señales nuevas van SIEMPRE al final de la lista: un modelo guardado antes d
 se carga igual, con peso 0 para ella (así AP3 sigue dando exactamente las mismas listas)."""
 NOMBRES = [n for n, _ in SENALES]
 _I = {n: i for i, n in enumerate(NOMBRES)}
+GRUPOS = {"o1": ["n_" + n for n in CON_NUEVO], "o2": ["tasa_tipo", "pop_tipo", "tasa_marca"]}
+"""APO (dom madrugada; O = datos orgánicos). Dos ideas, cada una un grupo de señales, para un A/B con control común:
+  o1 = pesos propios para compradores nuevos (el modelo predecía 3,24 compras/100 en nuevos y salían 2,67; en
+       conocidos 1,29 y salían 1,75: las señales no valen lo mismo en los dos grupos).
+  o2 = lo que se sabe del TIPO de producto en los 60 días de shop.history_events (compras por vista y ventas medias de
+       su subcategoría y tramo de precio, y de su marca). Un producto nuevo no tiene números propios, pero sí tipo.
+       Los números salen del historial; cuánto PESAN lo decide, como siempre, nuestro feedback.
+    python -m src.aprendiz --nombre apoc --sin o1,o2                  # control
+    python -m src.aprendiz --sin-descarga --nombre apo1 --sin o2      # control + o1
+    python -m src.aprendiz --sin-descarga --nombre apo2 --sin o1      # control + o2"""
+GRUPOS["h"] = ["cocompra_hoy", "cf_hist"]
+"""APH1 (dom madrugada) = modelo HÍBRIDO: dos especialistas y un reparto por tipo de comprador.
+  - `cocompra_hoy` aprende de la tienda de HOY, evento a evento: sirve para compradores nuevos y productos nuevos.
+  - `cf_hist` usa los 60 días de compras de cada comprador conocido (filtrado colaborativo producto a producto).
+  - Además se entrenan DOS regresiones, una solo con las respuestas a compradores nuevos y otra con las de conocidos
+    (`--solo nuevos` / `--solo conocidos`); el servicio usa una u otra según `is_new_user`.
+    python -m src.aprendiz --nombre aphc --sin o1,o2,h                                  # control (= AP7 reentrenado)
+    python -m src.aprendiz --sin-descarga --nombre aph1_n --sin o1,o2 --solo nuevos     # especialista de nuevos
+    python -m src.aprendiz --sin-descarga --nombre aph1_c --sin o1,o2 --solo conocidos  # especialista de conocidos"""
+N_COCOMPRA, N_CF, VECINOS_CF, FUENTES_HOY = 15, 20, 30, 8
+"""Candidatos que aporta cada fuente nueva, vecinos guardados por producto y cuántos productos mirados se usan."""
+PSEUDO_COCOMPRA = 20.0
+GRUPOS["x"] = ["gusto_hist", "ctx_dev_sub", "parte_ses_cat", "prod_nuevo", "precio_rel_sub", "vistas_hoy_u",
+               "co_hay", "cf_hay", "co_raiz", "cf_raiz"]
+"""AP8 (dom 06:00) = modelo de ELECCIÓN (`--eleccion`). Dos cambios sobre el híbrido:
+  1. Cómo se aprende. Hasta ahora: "¿se compra este producto enseñado, sí o no?" (una fila por producto). Así los pesos
+     mezclan dos cosas: qué PRODUCTO es mejor y qué PETICIÓN iba a comprar de todos modos (quien tiene carrito hoy compra
+     más, enseñes lo que enseñes). Ahora: "de los 10 que enseñamos, ¿cuál eligió?" (logit condicional, solo listas con
+     compra o clic). Lo que es igual para los 10 se cancela y queda solo lo que sirve para ORDENAR. Resultado: lo suyo
+     pesa menos (carrito de hoy ×6 -> ×2,4) y la medida de elección mejora (EXPERIMENTOS, dom 06:00).
+  2. Señales nuevas (grupo `x`), cada una comprobada quitándola o añadiéndola: gusto personal por factorización del
+     historial, contexto (dispositivo × subcategoría), parte de la sesión en esa categoría, producto nuevo, precio
+     frente al típico de su subcategoría y cuántas veces lo ha mirado hoy. Las cuatro últimas (`co_*`, `cf_*`) salen
+     de probar árboles (LightGBM) encima del modelo: lo que encontraban era sobre todo la FORMA de cocompra_hoy y
+     cf_hist (suben deprisa y se aplanan). Con esa forma dentro, el modelo sigue siendo una suma de pesos que se lee.
+    python -m src.aprendiz --nombre ap8 --eleccion --sin o1,o2     # el modelo
+    python -m src.aprendiz --sin-descarga --nombre ap8c --sin o1,o2,h,x   # control por producto (= AP7), mismo momento"""
+N_GUSTO, DIM_GUSTO = 15, 64
+"""Candidatos que aporta el gusto personal y nº de factores de la factorización."""
+MAX_NUEVOS = 2
+"""Tope de productos NUEVOS que no son del comprador en una lista del modelo de elección. Por qué: el modelo les da
+×4,8 (y, enseñados, se compran ~2 veces más que uno conocido en el mismo hueco), pero solo los habíamos enseñado
+~0,5 veces por lista; sin tope pondría ~5 por lista, mucho más allá de lo que hemos visto. Se sube cuando el feedback
+del propio AP8 lo respalde. Los nuevos que el comprador ha mirado o metido en el carrito no cuentan para el tope."""
+PESO_CLIC_ELECCION, L2_ELECCION = 0.3, 3.0
+"""En el modelo de elección una lista con clic y sin compra cuenta 0,3 (hay 3 veces más clics que compras: afinan los
+pesos sin mandar sobre las compras). Probado 0 / 0,15 / 0,3 / 0,5 / 1 y L2 1-30: la medida apenas cambia."""
+_N_BASE = _I["tasa_marca"] + 1
+_I_CO, _I_CF = _I["cocompra_hoy"], _I["cf_hist"]
+_I_X = [_I[n] for n in GRUPOS["x"]]
+_I_GUSTO, _I_X5 = _I["gusto_hist"], slice(_I["ctx_dev_sub"], _I["vistas_hoy_u"] + 1)
+_I_FORMA = [_I[n] for n in ("co_hay", "cf_hay", "co_raiz", "cf_raiz")]
+_I_BASE_NUEVO = [_I[n] for n in CON_NUEVO]
+_I_NUEVO = [_I["n_" + n] for n in CON_NUEVO]
+DE_PRODUCTO = ["pop", "tasa", "tasa_tipo", "pop_tipo", "tasa_marca"]
+"""Señales que solo dependen del producto: con ellas se hacen las listas de mejores (candidatos)."""
 
 
 # ---------------------------------------------------------------- RawTree (solo lectura)
@@ -167,7 +249,7 @@ def cargar_historial() -> dict:
     Devuelve compras y carritos por comprador, sus vistas por subcategoría y vistas/compras por producto."""
     h = _leer("historial.pkl", None)
     if h is not None:
-        return h
+        return _con_dispositivo(h)
     print("historial: bajando (solo la primera vez, ~1-2 min)...", flush=True)
     pares = {}
     for tipo in ("purchase", "add_to_cart"):
@@ -193,6 +275,20 @@ def cargar_historial() -> dict:
     _guardar("historial.pkl", h)
     print(f"historial: {len(h['compras'])} compradores con compras, {len(h['carritos'])} con carritos, "
           f"{len(h['afinidad'])} con vistas, {len(productos)} productos", flush=True)
+    return _con_dispositivo(h)
+
+
+def _con_dispositivo(h: dict) -> dict:
+    """Añade al historial guardado las compras por dispositivo y producto (para `ctx_dev_sub`). Una consulta ligera,
+    una sola vez. Si falla, la señal vale 0 y todo lo demás sigue igual (se vuelve a intentar en el siguiente arranque)."""
+    if "dispositivo" not in h:
+        try:
+            filas = _query("""SELECT device::String AS d, product_id::String AS p, count() AS n FROM shop.history_events
+                              WHERE event_type = 'purchase' GROUP BY d, p LIMIT 500000""", 60)
+            h["dispositivo"] = [(f["d"], f["p"], int(f["n"])) for f in filas]
+            _guardar("historial.pkl", h)
+        except Exception as e:
+            print(f"historial: sin compras por dispositivo ({e})"[:160], flush=True)
     return h
 
 
@@ -292,6 +388,14 @@ class Mundo:
         self.hasta_ms = INICIO_VIVO_MS
         self._recientes: set = set()
         self._candado = threading.Lock()
+        self._tipos = _numeros_por_tipo(catalogo, h["productos"])
+        self.vistas_hoy: dict[str, list] = {}       # comprador -> últimos productos mirados hoy (sin repetir)
+        self.vistas_hoy_p: dict[str, int] = {}      # producto -> vistas de hoy
+        self.cocompra: dict[str, dict] = {}         # X -> {Y: veces que alguien miró X hoy y después compró Y}
+        self._cf = _vecinos_cf(h["compras"]) if historial else {}
+        self.vistas_u: dict[str, dict] = {}         # comprador -> {producto: veces que lo ha mirado hoy} (los de vistas_hoy)
+        self._gusto = _gusto_svd(h["compras"], h["carritos"]) if historial else None
+        self._ctx_dev = _lift_dispositivo(catalogo, h.get("dispositivo") or [])
 
     # ---- escribir
     def evento(self, t: int, u: str, p: str, tipo: int) -> None:
@@ -302,12 +406,26 @@ class Mundo:
                 d[sub] = d.get(sub, 0) + 1
             self.vistas_p[p] = self.vistas_p.get(p, 0.0) + 1
             self.total_vistas += 1
+            self.vistas_hoy_p[p] = self.vistas_hoy_p.get(p, 0) + 1
+            v = self.vistas_hoy.setdefault(u, [])
+            if p in v:
+                v.remove(p)
+            v.append(p)
+            n = self.vistas_u.setdefault(u, {})
+            n[p] = n.get(p, 0) + 1
+            if len(v) > 20:
+                n.pop(v[0], None)
+                del v[0]
         elif tipo == CARRITO:
             self.carrito_hoy.setdefault(u, set()).add(p)
         elif tipo == COMPRA:
             self.comprados.setdefault(u, set()).add(p)
             self.compras_p[p] = self.compras_p.get(p, 0.0) + 1
             self.total_compras += 1
+            for x in self.vistas_hoy.get(u, ()):
+                if x != p:  # mirar X y comprar X ya lo cuenta `visto_sesion`
+                    d = self.cocompra.setdefault(x, {})
+                    d[p] = d.get(p, 0) + 1
         if t > self.hasta_ms:
             self.hasta_ms = t
 
@@ -352,10 +470,12 @@ class Mundo:
             comprados = self.comprados.get(u) or ()
             hoy = self.carrito_hoy.get(u) or ()
             antiguo = self.carrito_antiguo.get(u) or ()
-            return {"comprados": set(comprados),
+            return {"u": u, "comprados": set(comprados),
                     "carrito_hoy": {p for p in hoy if p not in comprados},
                     "carrito_antiguo": {p for p in antiguo if p not in comprados and p not in hoy},
-                    "vistas_sub": dict(self.vistas_sub.get(u) or {})}
+                    "vistas_sub": dict(self.vistas_sub.get(u) or {}),
+                    "vistas_hoy": list(self.vistas_hoy.get(u) or ()),
+                    "vistas_n": dict(self.vistas_u.get(u) or {})}
 
     def numeros_producto(self, p: str) -> tuple[float, float]:
         """(pop, tasa) de un producto con lo visto hasta ahora. Las dos son proporciones: no crecen con las horas."""
@@ -368,8 +488,191 @@ class Mundo:
         return pop, tasa
 
 
-def senales(mundo: Mundo, foto: dict, vistos: list[str], nuevo: bool, candidatos: list[str]) -> np.ndarray:
-    """Matriz (len(candidatos), len(SENALES)). La misma función al entrenar y al recomendar."""
+    def afines_hoy(self, fuentes: list[str]) -> dict[str, float]:
+        """producto -> parte de las vistas de HOY de `fuentes` que acabaron en compra de ese producto (sumada)."""
+        r: dict[str, float] = {}
+        with self._candado:
+            for x in fuentes:
+                d = self.cocompra.get(x)
+                if d:
+                    k = 1.0 / (self.vistas_hoy_p.get(x, 0) + PSEUDO_COCOMPRA)
+                    for y, n in d.items():
+                        r[y] = r.get(y, 0.0) + n * k
+        return r
+
+    def afines_historial(self, comprados) -> dict[str, float]:
+        """producto -> parecido (coseno) con lo que este comprador ya compró, sumado. Vacío si no ha comprado nada."""
+        r: dict[str, float] = {}
+        for x in comprados:
+            for y, v in self._cf.get(x, ()):
+                r[y] = r.get(y, 0.0) + v
+        return r
+
+    def numeros_tipo(self, d: dict) -> tuple[float, float, float]:
+        """(tasa_tipo, pop_tipo, tasa_marca) de un producto según su ficha del catálogo. Sirve igual para uno nuevo."""
+        t = self._tipos
+        if not t:
+            return 0.0, 0.0, 0.0
+        sub = d.get("subcategory")
+        tasa, pop = t["tipo"].get((sub, _tramo(t["cortes"].get(sub), d.get("price_eur"))), t["media"])
+        return tasa, pop, t["marca"].get(d.get("brand"), t["media"][0])
+
+    def gusto(self, u: str | None, productos: list[str]) -> np.ndarray | None:
+        """Cuánto encaja cada producto con el gusto de ese comprador (sus factores · los del producto).
+        None si el comprador no tiene carritos ni compras en el historial; 0 para un producto que no estaba."""
+        g = self._gusto
+        if not g or u not in g["u"]:
+            return None
+        return g["V"][[g["p"].get(p, -1) for p in productos]] @ g["U"][g["u"][u]]   # -1 = última fila, que es todo ceros
+
+    def mejores_gusto(self, u: str | None, n: int) -> list[str]:
+        """Los n productos del historial que mejor encajan con el gusto de ese comprador (candidatos)."""
+        g = self._gusto
+        if not g or u not in g["u"]:
+            return []
+        s = g["V"][:-1] @ g["U"][g["u"][u]]
+        return [g["productos"][j] for j in np.argpartition(-s, n)[:n]]
+
+
+def _vecinos_cf(compras: dict[str, set]) -> dict[str, list]:
+    """Filtrado colaborativo producto a producto con las compras de los 60 días: para cada producto, los
+    VECINOS_CF que más comparten compradores con él (coseno = compradores en común / raíz de los de cada uno).
+    Se calcula una vez (~2 s) y se guarda en data/aprendiz/cf.pkl: el historial no cambia."""
+    guardado = _leer("cf.pkl", None)
+    if guardado is not None and guardado.get("n") == len(compras):
+        return guardado["vecinos"]
+    from scipy import sparse
+    productos = sorted({p for s in compras.values() for p in s})
+    if not productos:
+        return {}
+    idx = {p: i for i, p in enumerate(productos)}
+    filas, cols = [], []
+    for k, s in enumerate(compras.values()):
+        filas += [k] * len(s)
+        cols += [idx[p] for p in s]
+    M = sparse.csr_matrix((np.ones(len(filas), dtype=np.float32), (filas, cols)), shape=(len(compras), len(productos)))
+    C = (M.T @ M).toarray()
+    n = np.sqrt(np.maximum(C.diagonal(), 1.0))
+    C = C / n[:, None] / n[None, :]
+    np.fill_diagonal(C, 0.0)
+    vecinos = {}
+    for i, p in enumerate(productos):
+        mejores = np.argpartition(-C[i], VECINOS_CF)[:VECINOS_CF]
+        vecinos[p] = [(productos[j], float(C[i, j])) for j in mejores if C[i, j] > 0]
+    _guardar("cf.pkl", {"n": len(compras), "vecinos": vecinos})
+    return vecinos
+
+
+def _gusto_svd(compras: dict[str, set], carritos: dict[str, set]) -> dict | None:
+    """Gusto personal por factorización (SVD truncada, DIM_GUSTO factores) de la tabla comprador × producto de los
+    60 días: 1 si lo metió en el carrito, +1 si lo compró. Cada comprador y cada producto quedan resumidos en
+    DIM_GUSTO números; su producto escalar dice cuánto encajan, también para productos que ese comprador nunca tocó.
+    Se calcula una vez (~5 s) y se guarda en data/aprendiz/gusto.pkl: el historial no cambia."""
+    clave = (len(compras), len(carritos), DIM_GUSTO)
+    guardado = _leer("gusto.pkl", None)
+    if guardado is not None and guardado.get("clave") == clave:
+        return guardado
+    from scipy import sparse
+    from scipy.sparse.linalg import svds
+    usuarios = sorted(set(compras) | set(carritos))
+    productos = sorted({p for d in (compras, carritos) for s in d.values() for p in s})
+    if min(len(usuarios), len(productos)) <= DIM_GUSTO:
+        return None
+    ui = {u: i for i, u in enumerate(usuarios)}
+    pi = {p: i for i, p in enumerate(productos)}
+    filas, cols = [], []
+    for d in (compras, carritos):
+        for u, s in d.items():
+            filas += [ui[u]] * len(s)
+            cols += [pi[p] for p in s]
+    M = sparse.csr_matrix((np.ones(len(filas), dtype=np.float32), (filas, cols)), shape=(len(usuarios), len(productos)))
+    U, s, Vt = svds(M, k=DIM_GUSTO)   # los pares repetidos (carrito y compra) se suman al construir la matriz
+    g = {"clave": clave, "u": ui, "p": pi, "productos": productos, "U": (U * s).astype(np.float32),
+         "V": np.vstack([Vt.T, np.zeros((1, DIM_GUSTO))]).astype(np.float32)}
+    _guardar("gusto.pkl", g)
+    return g
+
+
+def _lift_dispositivo(catalogo: dict, filas: list[tuple]) -> dict[str, dict]:
+    """dispositivo -> subcategoría -> log(parte de las compras hechas desde ese dispositivo que caen en la subcategoría
+    / esa misma parte en toda la tienda). 0 = como la media. Sirve igual para un comprador o un producto nuevos."""
+    por: dict = defaultdict(Counter)
+    todo: Counter = Counter()
+    for d, p, n in filas:
+        sub = catalogo.get(p, {}).get("subcategory")
+        if sub:
+            por[d][sub] += n
+            todo[sub] += n
+    total = sum(todo.values())
+    if not total:
+        return {}
+    return {d: {s: math.log((c[s] / sum(c.values()) + 1e-4) / (todo[s] / total + 1e-4)) for s in todo}
+            for d, c in por.items()}
+
+
+def _afines(mundo: Mundo, foto: dict, vistos: list[str]) -> tuple[dict, dict]:
+    """(afines de hoy, afines del historial) de un comprador; se guardan en su foto para no calcularlos dos veces.
+    Fuentes de hoy: lo mirado en la sesión (sin vistas, lo último que miró hoy) y su carrito de hoy."""
+    if "co" not in foto:
+        fuentes = list(dict.fromkeys(reversed(vistos)))[:FUENTES_HOY] or foto.get("vistas_hoy", [])[-FUENTES_HOY:]
+        foto["co"] = mundo.afines_hoy(list(dict.fromkeys(fuentes + list(foto["carrito_hoy"]))))
+        foto["cf"] = mundo.afines_historial(foto["comprados"])
+    return foto["co"], foto["cf"]
+
+
+def _tramo(cortes: tuple | None, precio) -> int:
+    """Tramo de precio dentro de su subcategoría: 0 barato, 1 medio, 2 caro (tercios del catálogo)."""
+    try:
+        precio = float(precio)
+    except (TypeError, ValueError):
+        return 1
+    if not cortes:
+        return 1
+    return 0 if precio <= cortes[0] else (1 if precio <= cortes[1] else 2)
+
+
+def _numeros_por_tipo(catalogo: dict, productos: dict) -> dict:
+    """Con las vistas y compras por producto del historial (shop.history_events, 60 días), agrupa por TIPO
+    (subcategoría × tramo de precio) y por marca. Se calcula una vez: el historial no cambia."""
+    if not productos:
+        return {}
+    precios: dict[str, list] = defaultdict(list)
+    for d in catalogo.values():
+        if d.get("subcategory") and d.get("price_eur") is not None:
+            precios[d["subcategory"]].append(float(d["price_eur"]))
+    cortes = {s: (float(np.quantile(v, 1 / 3)), float(np.quantile(v, 2 / 3))) for s, v in precios.items()}
+    tipo: dict = defaultdict(lambda: [0.0, 0.0, 0])   # vistas, compras, nº de productos
+    marca: dict = defaultdict(lambda: [0.0, 0.0])
+    tv = tc = 0.0
+    for p, (v, c) in productos.items():
+        d = catalogo.get(p)
+        if not d:
+            continue
+        a = tipo[(d.get("subcategory"), _tramo(cortes.get(d.get("subcategory")), d.get("price_eur")))]
+        a[0] += v; a[1] += c; a[2] += 1
+        b = marca[d.get("brand")]
+        b[0] += v; b[1] += c
+        tv += v; tc += c
+    if not tv or not tc:
+        return {}
+    media = tc / tv
+
+    def tasa(v: float, c: float) -> float:
+        return math.log((c + PSEUDO_TIPO * media) / (v + PSEUDO_TIPO))
+
+    def pop(c: float, n: int) -> float:  # misma escala que `pop`: lo que vendería un producto medio de ese tipo
+        return math.log((PESO_HISTORIAL * c / max(n, 1) + 1.0) / (PESO_HISTORIAL * tc + 5000.0))
+
+    return {"cortes": cortes, "tipo": {k: (tasa(v, c), pop(c, n)) for k, (v, c, n) in tipo.items()},
+            "marca": {k: tasa(v, c) for k, (v, c) in marca.items()}, "media": (math.log(media), pop(tc, len(productos)))}
+
+
+def senales(mundo: Mundo, foto: dict, vistos: list[str], nuevo: bool, candidatos: list[str],
+            con_h: bool = True, dev: str = "", con_x: bool = True) -> np.ndarray:
+    """Matriz (len(candidatos), len(SENALES)). La misma función al entrenar y al recomendar.
+    con_h=False / con_x=False se saltan las señales de los grupos "h" / "x" (para los modelos que no las usan: quedan
+    a 0). `dev` = context.device de la petición (solo lo usa `ctx_dev_sub`)."""
+    co, cf = _afines(mundo, foto, vistos) if con_h or con_x else ({}, {})
     cat = mundo.catalogo
     ultimo = vistos[-1] if vistos else None
     d_ult = cat.get(ultimo, {}) if ultimo else {}
@@ -388,7 +691,7 @@ def senales(mundo: Mundo, foto: dict, vistos: list[str], nuevo: bool, candidatos
         comprado = p in foto["comprados"]
         pop, tasa = mundo.numeros_producto(p)
         suyo = p in foto["carrito_hoy"] or p in foto["carrito_antiguo"] or p in en_sesion
-        X[i] = (p in foto["carrito_hoy"],
+        X[i, :_N_BASE] = (p in foto["carrito_hoy"],
                 p in foto["carrito_antiguo"],
                 p in en_sesion and not comprado,
                 comprado,
@@ -397,11 +700,49 @@ def senales(mundo: Mundo, foto: dict, vistos: list[str], nuevo: bool, candidatos
                 bool(ultimo) and d.get("category") == d_ult.get("category"),
                 pop, tasa,
                 not vistos, nuevo,
-                bool(ultimo) and not suyo and not comprado and d.get("subcategory") == d_ult.get("subcategory"))
+                bool(ultimo) and not suyo and not comprado and d.get("subcategory") == d_ult.get("subcategory"),
+                *mundo.numeros_tipo(d))
+        if co or cf:
+            X[i, _I_CO] = math.sqrt(co.get(p, 0.0))
+            X[i, _I_CF] = math.sqrt(cf.get(p, 0.0))
+    if nuevo:
+        X[:, _I_NUEVO] = X[:, _I_BASE_NUEVO]
+    if con_x:
+        gusto = mundo.gusto(foto.get("u"), candidatos)
+        if gusto is not None:
+            X[:, _I_GUSTO] = gusto
+        X[:, _I_FORMA] = np.column_stack([X[:, _I_CO] > 0, X[:, _I_CF] > 0, np.sqrt(X[:, _I_CO]), np.sqrt(X[:, _I_CF])])
+        lift = mundo._ctx_dev.get(dev) or {}
+        mediana = _mediana_subcategoria(cat)
+        cat_sesion = Counter(cat.get(p, {}).get("category") for p in vistos)
+        vistas_n = foto.get("vistas_n") or {}
+        conocidos = mundo.conocidos
+        for i, p in enumerate(candidatos):
+            d = cat.get(p, {})
+            sub, precio = d.get("subcategory"), d.get("price_eur")
+            X[i, _I_X5] = (lift.get(sub, 0.0),
+                           cat_sesion.get(d.get("category"), 0) / len(vistos) if vistos else 0.0,
+                           bool(conocidos) and p not in conocidos,
+                           math.log(float(precio) / mediana[sub]) if precio and mediana.get(sub) else 0.0,
+                           math.log1p(vistas_n.get(p, 0)))
     return X
 
 
 _SUB_CAT: dict = {}
+_MEDIANA: dict = {}
+
+
+def _mediana_subcategoria(cat: dict) -> dict[str, float]:
+    """subcategoría -> precio mediano de sus productos. Se recalcula si cambia el catálogo (precios nuevos)."""
+    clave = (id(cat), len(cat))
+    if _MEDIANA.get("clave") != clave:
+        precios: dict[str, list] = defaultdict(list)
+        for d in cat.values():
+            if d.get("subcategory") and d.get("price_eur"):
+                precios[d["subcategory"]].append(float(d["price_eur"]))
+        _MEDIANA["mapa"] = {s: float(np.median(v)) for s, v in precios.items()}
+        _MEDIANA["clave"] = clave
+    return _MEDIANA["mapa"]
 
 
 def _subcategoria_a_categoria(cat: dict) -> dict[str, str]:
@@ -452,11 +793,17 @@ class Modelo:
     def listas(self, mundo: Mundo, forzar: bool = False) -> dict:
         """Mejores productos (por las dos señales de producto) de la tienda, por categoría y por subcategoría."""
         if forzar or not self._listas or time.monotonic() - self._listas_t > SEGUNDOS_LISTAS:
-            w_pop, w_tasa = self.pesos["pop"], self.pesos["tasa"]
+            # el modelo de elección trae aparte los pesos con los que se hacen las listas (ver entrenar_eleccion)
+            pesos = self.info.get("pesos_listas") or self.pesos
+            w = [pesos.get(n, 0.0) for n in DE_PRODUCTO]
+            con_tipo = any(w[2:])
             puntos = []
             for p, d in list(mundo.catalogo.items()):
                 pop, tasa = mundo.numeros_producto(p)
-                puntos.append((w_pop * pop + w_tasa * tasa, p, d.get("category"), d.get("subcategory")))
+                valor = w[0] * pop + w[1] * tasa
+                if con_tipo:
+                    valor += sum(a * b for a, b in zip(w[2:], mundo.numeros_tipo(d)))
+                puntos.append((valor, p, d.get("category"), d.get("subcategory")))
             puntos.sort(reverse=True)
             por_cat: dict[str, list] = defaultdict(list)
             por_sub: dict[str, list] = defaultdict(list)
@@ -489,6 +836,19 @@ def _leer_peticion(peticion: dict) -> tuple[str, list[str], bool]:
             nuevo is True or nuevo == 1 or str(nuevo).lower() == "true")
 
 
+def _dispositivo(peticion: dict) -> str:
+    """context.device de la petición, venga `context` como objeto, como texto JSON o ya aplanado."""
+    c = peticion.get("context")
+    if isinstance(c, str):
+        try:
+            c = json.loads(c)
+        except ValueError:
+            c = None
+    if isinstance(c, dict) and c.get("device"):
+        return str(c["device"])
+    return str(peticion.get("context.device") or "")
+
+
 def candidatos(mundo: Mundo, modelo: Modelo, foto: dict, vistos: list[str], vale) -> list[str]:
     listas = modelo.listas(mundo)
     cat = mundo.catalogo
@@ -505,6 +865,11 @@ def candidatos(mundo: Mundo, modelo: Modelo, foto: dict, vistos: list[str], vale
         cand += listas["cat"].get(c, [])[:N_CATEGORIA]
     for sub, _ in subs[:SUBCATEGORIAS_AFINES]:
         cand += listas["sub"].get(sub, [])[:N_SUBCATEGORIA]
+    if modelo.w[_I_CO] or modelo.w[_I_CF]:  # solo los modelos híbridos: los demás dan las mismas listas que antes
+        co, cf = _afines(mundo, foto, vistos)
+        cand += sorted(co, key=co.get, reverse=True)[:N_COCOMPRA] + sorted(cf, key=cf.get, reverse=True)[:N_CF]
+    if modelo.w[_I_GUSTO]:  # solo los modelos que usan el gusto personal
+        cand += mundo.mejores_gusto(foto.get("u"), N_GUSTO)
     cand += listas["todos"][:N_GLOBAL]
     return [p for p in dict.fromkeys(cand) if vale(p)]
 
@@ -570,8 +935,22 @@ def recomendar(peticion: dict, mundo: Mundo, modelo: Modelo, disponibles: set[st
         for nombre, multiplicador in forzar.items():
             w[_I[nombre]] = math.log(multiplicador)
     if cand:
-        s = senales(mundo, foto, vistos, nuevo, cand) @ w
-        elegidos = [cand[i] for i in np.argsort(-s, kind="stable")[:10]]
+        s = senales(mundo, foto, vistos, nuevo, cand, con_h=bool(w[_I_CO] or w[_I_CF]), dev=_dispositivo(peticion),
+                    con_x=bool(w[_I_X].any())) @ w
+        orden = np.argsort(-s, kind="stable")
+        tope = modelo.info.get("max_nuevos")
+        if tope is None or not mundo.conocidos:
+            elegidos = [cand[i] for i in orden[:10]]
+        else:  # modelo de elección: como mucho `tope` productos NUEVOS que no sean del comprador (ver MAX_NUEVOS)
+            suyos, nuevos = foto["carrito_hoy"] | foto["carrito_antiguo"] | set(vistos), 0
+            for i in orden:
+                if cand[i] not in mundo.conocidos and cand[i] not in suyos:
+                    if nuevos >= tope:
+                        continue
+                    nuevos += 1
+                elegidos.append(cand[i])
+                if len(elegidos) == 10:
+                    break
     if len(elegidos) < 10:  # casi nunca: se completa con los mejores de la tienda y, en último caso, con cualquiera
         ya = set(elegidos)
         for fuente, exigir in ((modelo.listas(mundo)["todos"], vale), (sorted(disponibles), vale),
@@ -606,9 +985,9 @@ def matriz_entreno(catalogo: dict, historial: dict, eventos: list, peticiones: d
     Xs, ys, cs = [], [], []
 
     def al_llegar(rid: str) -> None:
-        _, u, nuevo, _, vistos = peticiones[rid]
+        _, u, nuevo, dev, vistos = peticiones[rid]
         ens, clic, compra, _ = feedback[rid]
-        Xs.append(senales(mundo, mundo.foto(u), list(vistos), nuevo, list(ens)))
+        Xs.append(senales(mundo, mundo.foto(u), list(vistos), nuevo, list(ens), dev=dev))
         ys.append([p == compra for p in ens])
         cs.append([p == clic for p in ens])
 
@@ -617,6 +996,14 @@ def matriz_entreno(catalogo: dict, historial: dict, eventos: list, peticiones: d
     return {"X": np.hstack([np.vstack(Xs), puestos]), "compra": np.array(ys, dtype=float).ravel(),
             "clic": np.array(cs, dtype=float).ravel(), "t": np.array([t for t, _ in orden]),
             "rids": [rid for _, rid in orden]}
+
+
+def solo_compradores(datos: dict, nuevos: bool) -> dict:
+    """Las respuestas de un solo tipo de comprador (nuevos o conocidos): para entrenar un especialista."""
+    f = (datos["X"][:, _I["nuevo"]] > 0) == nuevos
+    r = f.reshape(-1, 10)[:, 0]
+    return {"X": datos["X"][f], "compra": datos["compra"][f], "clic": datos["clic"][f], "t": datos["t"][r],
+            "rids": [x for x, ok in zip(datos["rids"], r) if ok]}
 
 
 def _perdida(y: np.ndarray, z: np.ndarray) -> float:
@@ -725,6 +1112,142 @@ def entrenar(datos: dict, peso_clic: float, parte_validacion: float = 0.3, habla
     return modelo, {"modelo_validacion": modelo_val, "corte_ms": corte}
 
 
+def ajustar_eleccion(X: np.ndarray, elegido: np.ndarray, peso: np.ndarray, l2: float = L2_ELECCION) -> np.ndarray:
+    """Logit condicional (numpy + L-BFGS). X son listas de 10 filas seguidas; `elegido` marca UNA fila por lista y
+    `peso` dice cuánto cuenta cada lista. Devuelve un peso por columna, sin constante: lo que es igual para los 10
+    productos se cancela. Las columnas se ponen en la misma escala para ajustar y se devuelven en la original."""
+    from scipy.optimize import minimize
+    k = X.shape[1]
+    sd = X.std(0)
+    sd[sd < 1e-12] = 1.0
+    Z = (X / sd).reshape(-1, 10, k)
+    Y = elegido.reshape(-1, 10)
+
+    def f(w: np.ndarray) -> tuple[float, np.ndarray]:
+        z = Z @ w
+        z -= z.max(1, keepdims=True)
+        pr = np.exp(z)
+        pr /= pr.sum(1, keepdims=True)
+        perdida = -(peso * np.log((pr * Y).sum(1))).sum() + 0.5 * l2 * float(w @ w)
+        return float(perdida), np.einsum("lik,li->k", Z, (pr - Y) * peso[:, None]) + l2 * w
+
+    return minimize(f, np.zeros(k), jac=True, method="L-BFGS-B", options={"maxiter": 500}).x / sd
+
+
+def _eleccion(z: np.ndarray, elegido: np.ndarray) -> np.ndarray:
+    """Por lista: -log P(el elegido | uno de los 10 fue elegido). Al azar sale log(10) = 2,30; más bajo = ordena mejor.
+    A diferencia del logloss por producto, no premia adivinar qué PETICIONES compran: solo mira el orden."""
+    z = z.reshape(-1, 10)
+    z = z - z.max(1, keepdims=True)
+    return -np.log((np.exp(z) * elegido.reshape(-1, 10)).sum(1) / np.exp(z).sum(1))
+
+
+def entrenar_eleccion(datos: dict, peso_clic: float = PESO_CLIC_ELECCION, parte_validacion: float = 0.3,
+                      hablar: bool = True, sin: tuple[str, ...] = ()) -> tuple[Modelo, dict]:
+    """AP8: aprende "de los 10 enseñados, cuál se eligió" con las listas que tuvieron compra (peso 1) o clic sin compra
+    (peso_clic). Valida POR TIEMPO como `entrenar` y compara, en las mismas listas, con el modelo por producto (con sus
+    mismas señales y con las de AP7). El modelo que se devuelve está entrenado con todo."""
+    k = len(SENALES)
+    fuera = set(sin) | {"sin_vistas", "nuevo"}     # iguales para los 10 productos de una lista: no pueden ordenar
+    usadas = [n for n in NOMBRES if n not in fuera]
+    X = datos["X"][:, [_I[n] for n in usadas] + list(range(k, k + 9))]
+    compra, clic = datos["compra"].reshape(-1, 10), datos["clic"].reshape(-1, 10)
+    corte = float(np.quantile(datos["t"], 1 - parte_validacion))
+    antes = datos["t"] < corte
+    con_compra, con_clic = compra.sum(1) > 0, clic.sum(1) > 0
+
+    def filas(listas: np.ndarray) -> np.ndarray:
+        return (np.flatnonzero(listas)[:, None] * 10 + np.arange(10)).ravel()
+
+    def ajustar_con(filtro: np.ndarray, columnas=slice(None)) -> np.ndarray:
+        partes = [(con_compra & filtro, compra, 1.0)]
+        if peso_clic > 0:
+            partes.append((con_clic & ~con_compra & filtro, clic, peso_clic))
+        return ajustar_eleccion(np.vstack([X[filas(f)][:, columnas] for f, _, _ in partes]),
+                                np.concatenate([y[f].ravel() for f, y, _ in partes]),
+                                np.concatenate([np.full(int(f.sum()), p) for f, _, p in partes]))
+
+    val_c, val_k = con_compra & ~antes, con_clic & ~antes
+    fc, fk = filas(val_c), filas(val_k)
+
+    def medir(z: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        return _eleccion(z[fc], compra[val_c]), _eleccion(z[fk], clic[val_k])
+
+    rng = np.random.default_rng(0)
+
+    def diferencia(a: np.ndarray, b: np.ndarray) -> tuple[float, float, float]:
+        d = a - b
+        medias = d[rng.integers(0, len(d), (400, len(d)))].mean(1)
+        return float(d.mean()), float(np.quantile(medias, .025)), float(np.quantile(medias, .975))
+
+    w_val = ajustar_con(antes)
+    z_val = X @ w_val
+    e_compra, e_clic = medir(z_val)
+    w_puesto = ajustar_con(antes, slice(len(usadas), None))
+    info = {"tipo": "eleccion", "max_nuevos": MAX_NUEVOS, "respuestas": int(len(datos["t"])), "compras": int(con_compra.sum()),
+            "clics": int(con_clic.sum()), "peso_clic": peso_clic, "l2": L2_ELECCION,
+            "listas_validacion": (int(val_c.sum()), int(val_k.sum())),
+            "eleccion": (float(e_compra.mean()), float(e_clic.mean())),
+            "eleccion_solo_puesto": tuple(float(e.mean()) for e in medir(X[:, len(usadas):] @ w_puesto)), "frente_a": {}}
+
+    # Los mismos datos con el modelo de siempre ("¿se compra este producto, sí o no?"): con estas señales y con las de AP7
+    ent = np.repeat(antes, 10)
+    for nombre, nombres in (("por producto, mismas señales", usadas + ["sin_vistas", "nuevo"]),
+                            ("por producto, señales de AP7", NOMBRES[:12])):
+        Xp = datos["X"][:, [_I[n] for n in nombres] + list(range(k, k + 9))]
+        wp = ajustar(Xp[ent], datos["compra"][ent])
+        r_compra, r_clic = medir(Xp @ wp[1:])
+        info["frente_a"][nombre] = {"eleccion": (float(r_compra.mean()), float(r_clic.mean())),
+                                    "compra": diferencia(e_compra, r_compra), "clic": diferencia(e_clic, r_clic)}
+        if nombre.endswith("mismas señales"):  # las listas de mejores (candidatos) se siguen haciendo con estos pesos:
+            # dentro de una lista la popularidad casi no ordena, pero solo hemos enseñado productos populares
+            info["pesos_listas"] = {n: float(wp[1 + nombres.index(n)]) for n in DE_PRODUCTO if n in nombres}
+        del Xp
+
+    s = (z_val - X[:, len(usadas):] @ w_val[len(usadas):])[fc].reshape(-1, 10)   # sin el puesto
+    puesto_real = compra[val_c].argmax(1)
+    rango = (s > s[np.arange(len(s)), puesto_real][:, None]).sum(1)
+    info["acierto_1"], info["acierto_3"] = float((rango == 0).mean()), float((rango < 3).mean())
+    info["enseñado_1"], info["enseñado_3"] = float((puesto_real == 0).mean()), float((puesto_real < 3).mean())
+
+    def modelo_de(w: np.ndarray, extra: dict) -> Modelo:
+        # la constante solo sirve para `valor()`: se elige para que la media predicha sea la tasa real de compra
+        z, a, b = X @ w, -30.0, 5.0
+        for _ in range(50):
+            c = (a + b) / 2
+            a, b = (c, b) if (1 / (1 + np.exp(-(c + z)))).mean() < datos["compra"].mean() else (a, c)
+        return Modelo({n: float(v) for n, v in zip(usadas, w)}, (a + b) / 2, [0.0] + [float(v) for v in w[len(usadas):]], extra)
+
+    modelo = modelo_de(ajustar_con(np.ones(len(antes), dtype=bool)), info)
+    modelo_val = modelo_de(w_val, {"corte_ms": corte, "pesos_listas": info["pesos_listas"], "max_nuevos": MAX_NUEVOS})
+    if hablar:
+        _contar_eleccion(modelo, info)
+    return modelo, {"modelo_validacion": modelo_val, "corte_ms": corte}
+
+
+def _contar_eleccion(modelo: Modelo, info: dict) -> None:
+    print(f"\nENTRENADO (elección) con {info['compras']} listas con compra y {info['clics']} con clic, de "
+          f"{info['respuestas']} respuestas nuestras; una lista con clic sin compra cuenta {info['peso_clic']}")
+    print("Cada señal: por cuánto multiplica la probabilidad de ser el elegido de la lista (>1 sube, <1 baja)")
+    for n, texto in SENALES:
+        if n in modelo.pesos:
+            print(f"  {n:<16} ×{math.exp(modelo.pesos[n]):7.2f}   {texto}")
+    print("  puestos 2..10    " + " ".join(f"×{math.exp(v):.2f}" for v in modelo.puestos[1:]))
+    nc, nk = info["listas_validacion"]
+    print(f"\nVALIDACIÓN por tiempo (último 30 %: {nc} listas con compra, {nk} con clic; modelo entrenado solo con lo anterior)")
+    print("  medida de elección = -log P(el elegido | la lista); al azar 2,303; más bajo = ordena mejor")
+    print(f"    solo el puesto                    compra {info['eleccion_solo_puesto'][0]:.4f} · clic {info['eleccion_solo_puesto'][1]:.4f}")
+    for nombre, r in info["frente_a"].items():
+        print(f"    {nombre:<33} compra {r['eleccion'][0]:.4f} · clic {r['eleccion'][1]:.4f}")
+    print(f"    ESTE MODELO (elección)            compra {info['eleccion'][0]:.4f} · clic {info['eleccion'][1]:.4f}")
+    for nombre, r in info["frente_a"].items():
+        print(f"    diferencia frente a «{nombre}» (IC 95 %, negativo = mejor): compra {r['compra'][0]:+.4f} "
+              f"[{r['compra'][1]:+.4f}, {r['compra'][2]:+.4f}] · clic {r['clic'][0]:+.4f} [{r['clic'][1]:+.4f}, {r['clic'][2]:+.4f}]")
+    print(f"  listas con compra: el modelo pone el comprado 1.º en el {100 * info['acierto_1']:.1f} % (nosotros lo pusimos "
+          f"1.º en el {100 * info['enseñado_1']:.1f} %); entre los 3 primeros {100 * info['acierto_3']:.1f} % "
+          f"(nosotros {100 * info['enseñado_3']:.1f} %)")
+
+
 def _contar(modelo: Modelo, info: dict) -> None:
     print(f"\nENTRENADO con {info['respuestas']} respuestas nuestras ({info['compras']} compras, {info['clics']} clics); "
           f"peso de un clic = {info['peso_clic']}")
@@ -768,9 +1291,9 @@ def ensayo(catalogo: dict, historial: dict, eventos: list, peticiones: dict, fee
     def al_llegar(rid: str) -> None:
         if rid not in elegidas:
             return
-        t, u, nuevo, _, vistos = peticiones[rid]
+        t, u, nuevo, dev, vistos = peticiones[rid]
         ens, _, compra, _ = feedback[rid]
-        peticion = {"request_id": rid, "user_id": u, "is_new_user": nuevo,
+        peticion = {"request_id": rid, "user_id": u, "is_new_user": nuevo, "context": {"device": dev},
                     "recent_views": [{"product_id": p} for p in vistos]}
         t0 = time.perf_counter()
         items = recomendar(peticion, mundo, modelo, disponibles)
@@ -783,12 +1306,12 @@ def ensayo(catalogo: dict, historial: dict, eventos: list, peticiones: dict, fee
             "exp_mismos_8": con_exp[:8] == items[:8],
             "exp_nuevo": con_exp[HUECO_NUEVO] not in mundo.conocidos,
             "exp_resto": con_exp[HUECO_RESTO] != items[HUECO_RESTO],
-            "valor_exp": modelo.valor(senales(mundo, foto, list(vistos), nuevo, con_exp)),
+            "valor_exp": modelo.valor(senales(mundo, foto, list(vistos), nuevo, con_exp, dev=dev)),
             "nuevo": nuevo, "sin_vistas": not vistos, "ms": ms,
             "invalida": bool(errores_respuesta(items, disponibles)),
             "con_comprado": any(p in foto["comprados"] for p in items),
-            "valor_nuestro": modelo.valor(senales(mundo, foto, list(vistos), nuevo, list(ens))),
-            "valor_nuevo": modelo.valor(senales(mundo, foto, list(vistos), nuevo, items)),
+            "valor_nuestro": modelo.valor(senales(mundo, foto, list(vistos), nuevo, list(ens), dev=dev)),
+            "valor_nuevo": modelo.valor(senales(mundo, foto, list(vistos), nuevo, items, dev=dev)),
             "compra_real": bool(compra),
             "iguales": len(set(items) & set(ens)),
             "carritos": sum(p in foto["carrito_hoy"] or p in foto["carrito_antiguo"] for p in items),
@@ -872,8 +1395,13 @@ def main() -> None:
                     help="guardar en data/aprendiz_<nombre>.json en vez de data/aprendiz.json (no pisa el que está en vivo)")
     ap.add_argument("--sin", default="",
                     help="señales que este entreno NO usa, separadas por comas (p. ej. misma_sub para el control de un A/B)")
-    ap.add_argument("--peso-clic", type=float, default=PESO_CLIC,
-                    help="cuánto cuenta un clic sin compra como si fuera compra (0 = solo compras)")
+    ap.add_argument("--solo", choices=["nuevos", "conocidos"], default=None,
+                    help="entrenar solo con las respuestas a ese tipo de comprador (especialista del híbrido)")
+    ap.add_argument("--peso-clic", type=float, default=None,
+                    help=f"cuánto cuenta un clic sin compra como si fuera compra (por defecto {PESO_CLIC}; con --eleccion, "
+                         f"{PESO_CLIC_ELECCION})")
+    ap.add_argument("--eleccion", action="store_true",
+                    help="AP8: aprender 'cuál de los 10 enseñados se elige' en vez de 'se compra o no' producto a producto")
     args = ap.parse_args()
 
     from src import catalogo as cat_mod
@@ -892,11 +1420,18 @@ def main() -> None:
     datos = matriz_entreno(catalogo, historial, eventos, peticiones, feedback)
     print(f"señales calculadas en {time.time() - t0:.0f} s ({len(datos['t'])} respuestas)")
 
-    sin = tuple(n for n in args.sin.split(",") if n)
+    sin = tuple(s for n in args.sin.split(",") if n for s in GRUPOS.get(n, [n]))  # "o1" / "o2" = el grupo entero
     desconocidas = [n for n in sin if n not in NOMBRES]
     if desconocidas:
         raise SystemExit(f"--sin: señales que no existen: {desconocidas}. Las que hay: {NOMBRES}")
-    modelo, extra = entrenar(datos, args.peso_clic, sin=sin)
+    if args.solo:
+        datos = solo_compradores(datos, args.solo == "nuevos")
+        sin += ("nuevo",) + tuple(GRUPOS["o1"])  # constantes dentro de un solo tipo de comprador
+    sin = tuple(dict.fromkeys(sin))
+    if args.eleccion:
+        modelo, extra = entrenar_eleccion(datos, PESO_CLIC_ELECCION if args.peso_clic is None else args.peso_clic, sin=sin)
+    else:
+        modelo, extra = entrenar(datos, PESO_CLIC if args.peso_clic is None else args.peso_clic, sin=sin)
     modelo.info["entrenado_utc"] = time.strftime("%Y-%m-%d %H:%M", time.gmtime())
     if args.ensayo:
         modelo.info["ensayo"] = ensayo(catalogo, historial, eventos, peticiones, feedback, extra["modelo_validacion"],

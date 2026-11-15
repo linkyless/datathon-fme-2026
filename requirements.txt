@@ -4,3 +4,4 @@ numpy
 jupyter
 python-dotenv
 lightgbm
+scipy

@@ -122,6 +122,65 @@ VARIANTES_AP4: list[tuple[str, dict]] = [
     ("-AP6", {"_aprendiz": "ap3", "_niveles": True}),  # 1/4: lista por niveles medidos (ver recomendar_por_niveles)
 ]
 """Prueba a cuatro brazos (`--ap4`): mismos pesos (AP3) y mismos candidatos; cambia el ORDEN. Se lee en la API."""
+
+VARIANTES_AP7: list[tuple[str, dict]] = [
+    ("-AP7C", {"_aprendiz": "ap7c"}),                                  # 1/3: control (mismos datos, sin misma_sub)
+    ("-AP7", {"_aprendiz": "ap7"}),                                    # 1/3: + misma_sub con su peso aprendido (×1,39)
+    ("-AP7S", {"_aprendiz": "ap7", "_forzar": {"misma_sub": 3.0}}),    # 1/3: + misma_sub forzada a ×3
+]
+"""A/B dom 02:45 (`--ap7`, lo lanza Alex como Operador en funciones): señal de subcategoría de lo último visto. Un
+control común para dos comparaciones: AP7C frente a AP7 y AP7C frente a AP7S. Se lee en la API (≥ 3 h por brazo)."""
+
+
+def variantes_apo(base: str) -> list[tuple[str, dict]]:
+    """A/B dom madrugada (`--apo s` o `--apo n`): datos orgánicos y compradores nuevos, a tercios, con control común.
+    Los tres modelos se entrenan en el mismo momento con los mismos datos (ver GRUPOS en aprendiz.py).
+    `base` = el ganador de la prueba AP7: "s" con la señal misma_sub, "n" sin ella."""
+    return [("-APOC", {"_aprendiz": f"apoc_{base}"}),    # 1/3: control
+            ("-APO1", {"_aprendiz": f"apo1_{base}"}),    # 1/3: + pesos propios para compradores nuevos
+            ("-APO2", {"_aprendiz": f"apo2_{base}"})]    # 1/3: + números del TIPO de producto (historial orgánico)
+
+
+VARIANTES_APH: list[tuple[str, dict]] = [
+    ("-APHC", {"_aprendiz": "aphc"}),                          # 1/2: control (AP7 reentrenado en el mismo momento)
+    ("-APH1", {"_aprendiz": "aph1_c", "_nuevo": "aph1_n"}),    # 1/2: híbrido: un especialista por tipo de comprador
+]
+"""A/B dom madrugada (`--aph`): modelo HÍBRIDO. Si la petición es de un comprador nuevo (`is_new_user`) responde el
+especialista de nuevos (`_nuevo`); si no, el de conocidos. Los dos usan además lo que se compra HOY tras mirar cada
+producto y el filtrado colaborativo del historial (grupo "h" de aprendiz.py). A medias para llegar antes a 2.500."""
+
+VARIANTES_APO2: list[tuple[str, dict]] = [
+    ("-APOC", {"_aprendiz": "apoc_s"}),    # 1/2: control (AP7 reentrenado a las 03:10)
+    ("-APO2", {"_aprendiz": "apo2_s"}),    # 1/2: + números del tipo de producto (historial orgánico), mismo entreno
+]
+"""Repetición a medias (`--apo2`) del brazo que asomó en la prueba a tercios cortada a 1.200 peticiones."""
+VARIANTES_APOH: list[tuple[str, dict]] = [
+    ("-APHC", {"_aprendiz": "aphc"}),                             # 1/2: control (AP7 reentrenado a las 03:40)
+    ("-APOH1", {"_aprendiz": "apoh1_c", "_nuevo": "apoh1_n"}),    # 1/2: híbrido APH1 + las señales de tipo de APO2
+]
+"""`--apoh`: las dos ideas juntas (solo si las dos muestran mejora por separado)."""
+VARIANTES_APH2: list[tuple[str, dict]] = [
+    ("-APHC", {"_aprendiz": "aphc"}),                         # 1/2: control (AP7 reentrenado a las 03:40)
+    ("-APH2", {"_aprendiz": "aphc", "_nuevo": "aph1_n"}),     # 1/2: especialista de nuevos + el control para conocidos
+]
+"""Sin lanzar. `--aph2`: lo que dejó la lectura de APH1 (dom 04:22): el especialista de nuevos mejora y el de conocidos empeora."""
+
+VARIANTES_APOH2: list[tuple[str, dict]] = [
+    ("-APHC", {"_aprendiz": "aphc"}),                           # 1/2: control (AP7 reentrenado a las 03:40)
+    ("-APOH2", {"_aprendiz": "apo2_s", "_nuevo": "aph1_n"}),    # 1/2: a cada grupo, el modelo que le fue mejor
+]
+"""`--apoh2` (dom 04:55): compradores nuevos -> especialista de nuevos de APH1 (fríos 2,00 frente a 1,65 del control);
+conocidos -> APO2, el modelo con los números del tipo de producto del historial (no fríos 1,50 frente a 1,39, y 1,61
+frente a 1,17 en la primera ronda). Ningún modelo nuevo: los dos ya han corrido en vivo."""
+
+VARIANTES_AP8: list[tuple[str, dict]] = [
+    ("-AP7", {"_aprendiz": "aphc"}),    # 1/2: control = AP7 con los pesos de APHC (reentrenado a las 03:40)
+    ("-AP8", {"_aprendiz": "ap8"}),     # 1/2: modelo de elección ("cuál de los 10") + señales del grupo "x" de aprendiz.py
+]
+"""`--ap8` (dom mañana): AP8 aprende qué producto de la lista se elige en vez de si cada producto se compra, y añade
+gusto personal (factorización del historial), contexto por dispositivo y la forma de las señales de co-compra.
+Offline y ensayo en limpio: EXPERIMENTOS, fila dom 06:00. `--ap8-solo` = todo el tráfico a AP8."""
+
 MUNDO: "aprendiz.Mundo | None" = None
 MODELOS_APRENDIZ: dict = {}
 """nombre del entreno (None = data/aprendiz.json, "ap3" = data/aprendiz_ap3.json) -> Modelo."""
@@ -201,6 +260,7 @@ def preparar_aprendiz(estado: Estado, parar: threading.Event) -> None:
     día cada 1,5 s. Nunca toca el stock. Mientras falte algo, esos brazos responden como C (etiquetados -C)."""
     global MUNDO
     nombres = {(None if p["_aprendiz"] is True else p["_aprendiz"]) for _, p in VARIANTES if p.get("_aprendiz")}
+    nombres |= {p["_nuevo"] for _, p in VARIANTES if p.get("_nuevo")}
     while not parar.is_set() and MUNDO is None:
         try:
             t = time.monotonic()
@@ -378,6 +438,8 @@ def respuesta_segura(peticion: dict, estado: Estado, mv: str) -> tuple[dict, boo
             params = {k: v for k, v in params.items() if k not in vaciar}
         if params.get("_aprendiz"):
             modelo = MODELOS_APRENDIZ.get(None if params["_aprendiz"] is True else params["_aprendiz"])
+            if params.get("_nuevo") and aprendiz._leer_peticion(peticion)[2]:  # híbrido: comprador nuevo
+                modelo = MODELOS_APRENDIZ.get(params["_nuevo"])
             if MUNDO is not None and modelo is not None:
                 explorar = bool(params.get("_explorar"))
                 if params.get("_bono"):
@@ -385,7 +447,8 @@ def respuesta_segura(peticion: dict, estado: Estado, mv: str) -> tuple[dict, boo
                 elif params.get("_niveles"):
                     items = recomendar_por_niveles(peticion, MUNDO, modelo, disponibles)
                 else:
-                    items = aprendiz.recomendar(peticion, MUNDO, modelo, disponibles, explorar=explorar)
+                    items = aprendiz.recomendar(peticion, MUNDO, modelo, disponibles, explorar=explorar,
+                                                forzar=params.get("_forzar"))
                 if not errores_respuesta(items, disponibles):
                     if explorar and aprendiz.toca_explorar(peticion.get("request_id") or ""):
                         mv += "x"  # la mitad que explora, con su propia fila en el leaderboard
@@ -481,6 +544,15 @@ def main() -> None:
     ap.add_argument("--ap3-solo", action="store_true", help="todo el tráfico a AP3, sin exploración ni control")
     ap.add_argument("--ap4", action="store_true", help="usar VARIANTES_AP4 (AP3 / bono 1,2 / bono 3,0 / niveles, a cuartos)")
     ap.add_argument("--ap", action="store_true", help="usar VARIANTES_AP (C 1/4, aprendiz 3/4)")
+    ap.add_argument("--ap7", action="store_true", help="usar VARIANTES_AP7 (AP7C / AP7 / AP7S, a tercios)")
+    ap.add_argument("--apo", choices=["s", "n"], help="APOC / APO1 / APO2 a tercios; s = con misma_sub, n = sin")
+    ap.add_argument("--aph", action="store_true", help="usar VARIANTES_APH (control / híbrido APH1, a medias)")
+    ap.add_argument("--apo2", action="store_true", help="usar VARIANTES_APO2 (control / APO2, a medias)")
+    ap.add_argument("--apoh", action="store_true", help="usar VARIANTES_APOH (control / híbrido + APO2, a medias)")
+    ap.add_argument("--aph2", action="store_true", help="usar VARIANTES_APH2 (control / especialista solo en nuevos)")
+    ap.add_argument("--apoh2", action="store_true", help="usar VARIANTES_APOH2 (control / nuevos->APH1, conocidos->APO2)")
+    ap.add_argument("--ap8", action="store_true", help="usar VARIANTES_AP8 (AP7 con los pesos de APHC / AP8, a medias)")
+    ap.add_argument("--ap8-solo", action="store_true", help="todo el tráfico a AP8, sin control")
     ap.add_argument("--duracion", type=float, default=0, help="segundos hasta pararse solo (0 = nunca)")
     args = ap.parse_args()
     global VARIANTES
@@ -494,6 +566,24 @@ def main() -> None:
         VARIANTES = [("-AP3", {"_aprendiz": "ap3"})]
     if args.ap4:
         VARIANTES = VARIANTES_AP4
+    if args.ap7:
+        VARIANTES = VARIANTES_AP7
+    if args.apo2:
+        VARIANTES = VARIANTES_APO2
+    if args.apoh:
+        VARIANTES = VARIANTES_APOH
+    if args.aph2:
+        VARIANTES = VARIANTES_APH2
+    if args.apoh2:
+        VARIANTES = VARIANTES_APOH2
+    if args.ap8:
+        VARIANTES = VARIANTES_AP8
+    if args.ap8_solo:
+        VARIANTES = [("-AP8", {"_aprendiz": "ap8"})]
+    if args.aph:
+        VARIANTES = VARIANTES_APH
+    if args.apo:
+        VARIANTES = variantes_apo(args.apo)
 
     mv = version_modelo()
     log(f"arrancando {mv} | equipo {TEAM} | {'SIN ENVÍO (prueba)' if args.sin_envio else 'EN VIVO'} | variantes {[v for v, _ in VARIANTES]}")

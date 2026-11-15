@@ -1,9 +1,28 @@
 # Estado de Alex
 
 - **Rol:** Evaluación (docs/guias/evaluacion.md)
-- **Actualizado:** dom 00:20
+- **Actualizado:** dom 06:10
 
 ## Haciendo ahora
+- **OPERADOR EN FUNCIONES desde dom 02:47 (Lester dormido). El servicio en vivo corre en el Mac de Alex.**
+  **Lester: NO relances el tuyo sin hablar conmigo antes; dos instancias = duplicados.**
+  - El servicio de Lester dejó de enviar a las 00:35:56; de 00:36 a 02:47 todo fue fallback.
+  - En vivo a las 06:10: `python -m src.servicio --apoh2` (APHC / APOH2 a medias, desde las 04:54). Lectura de las
+    06:04 (~5.400 pet. por brazo): APHC 1,75 · APOH2 1,58. **APOH2 no gana.** El control (AP7 con los pesos de APHC)
+    sigue siendo lo mejor medido en vivo.
+  - Antes: `--ap7` (02:50), `--apo s` (03:27), `--aph` (03:53), `--apo2` (04:23). Filas de EXPERIMENTOS.
+- **Listo, NO en vivo: AP8 = modelo de ELECCIÓN** (`data/aprendiz_ap8.json`, fila dom 06:05 de EXPERIMENTOS).
+  Siguiente paso, cuando yo lo decida: reiniciar con `python -m src.servicio --ap8` (AP7 con los pesos de APHC
+  frente a AP8, a medias). `--ap8-solo` = todo a AP8.
+  - Aprende "de los 10 enseñados, cuál se eligió" (`python -m src.aprendiz --nombre ap8 --eleccion --sin o1,o2`) y
+    suma 10 señales (grupo `x`): gusto personal del historial, contexto por dispositivo, producto nuevo, precio
+    relativo, vistas de hoy y la forma de las señales de co-compra. Tope: 2 productos nuevos ajenos por lista.
+  - Offline (716 listas con compra de prueba): medida de elección 1,807 (AP7) → 1,643 (AP8), diferencia −0,164
+    [−0,199, −0,129]; el comprado es el 1.º del modelo en el 42,0 %. Mejora en nuevos, conocidos, con y sin vistas.
+  - OJO: cambia mucho la lista (mismo 1.º que APHC en el 29 %, 4,65 de 10 en común; menos carritos, más productos sin
+    relación y nuevos) y los dos modelos no están de acuerdo en cuál vale más. NO está medido en vivo: lo decide el A/B.
+  - Antes de la final hay que reentrenarlo con el feedback que recoja su propio brazo.
+  - Prueba a cuartos (23:50-00:35, API): gana AP3 1,86 frente a AP4 1,56 · AP5 1,51 · AP6 1,33 (fila dom 00:35).
 - **Listo para Lester, NO en vivo: AP7 = aprendiz + señal `misma_sub`** (misma subcategoría que lo último visto, en
   productos que no son del comprador). Lo llamo AP7 porque AP4-AP6 ya son los brazos de orden de Lester. Números en
   EXPERIMENTOS (dom 00:15). Resumen honesto:
@@ -114,6 +133,19 @@ quitar variables con información.
 Ponderar por 1/propensity (con tope, p. ej. 50), como hace la R5, y validar con `python -m src.evaluar` (IPS10 + bootstrap).
 
 ## Descubierto (cosas que los demás deben saber)
+- **(dom 06:05) El logloss por producto engaña para ORDENAR.** Premia adivinar qué petición va a comprar: añadir
+  datos de la petición (página, dispositivo, nº de carritos) lo baja un 6,6 % y el orden no mejora. Para comparar
+  modelos de orden hay que usar la medida de "elección" (de los 10 enseñados, cuál se eligió), que ya imprime
+  `python -m src.aprendiz --eleccion`.
+- **(dom 06:05) Los pesos de "lo suyo" estaban inflados**: quien tiene carrito compra más, enseñes lo que enseñes.
+  Mirando solo dentro de cada lista, el carrito de hoy vale ×2,4 (no ×3,9), el antiguo ×1,5 (no ×2,9) y lo visto en
+  la sesión ×2,7 (no ×5,7). Cuadra con que AP4-AP6 perdieran.
+- **(dom 06:05) Un A/B de 25 min (~2.500 pet. por brazo) no distingue diferencias de 0,2-0,3**: APHC frente a APOH2
+  iba 1,80 / 1,44 con 2.500 y 1,75 / 1,58 con 5.400. Casi nada de lo "ganado" o "perdido" esta noche por 0,1-0,3
+  estaba demostrado.
+- **(dom 06:05) Los productos nuevos, enseñados, se compran más** que uno conocido en el mismo hueco: sin relación,
+  huecos 4-10, 0,85 por 1.000 (19 de 22.445) frente a 0,41; los del comprador, huecos 1-3, 12,05 frente a 6,45.
+  En la final llegan productos nuevos: importa.
 - **Lo que premia el simulador (feedback de hoy hasta las 18:28 UTC, 776.800 productos enseñados, 652 compras):**
   - Hueco 1, compra por producto enseñado: en su carrito de HOY sin comprar 2,5 % (785 casos) · en un carrito del
     historial sin comprar 1,18 % (2.796) · sin relación previa 0,22 %.

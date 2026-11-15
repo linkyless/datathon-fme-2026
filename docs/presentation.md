@@ -1,187 +1,184 @@
-# Presentación · mental_descent() · RawTree Real-Time Recommendation
+# Presentation notes: mental_descent(), RawTree real-time recommendation
 
-**Estado: dom ~04:30. BORRADOR para el checkpoint de las 08:00.**
-Regla del equipo: solo entran números de `docs/EXPERIMENTOS.md`, de `team_29.feedback` o de consultas
-ejecutadas — nada inventado. Los huecos van marcados **[PENDIENTE]**.
+**Status: Sun ~04:30. DRAFT for the 08:00 checkpoint.**
+Team rule: only numbers from `docs/EXPERIMENTS.md`, from `team_29.feedback` or from queries that ran go in, nothing
+made up. Gaps are marked **[TODO]**.
 
-La presentación tiene dos hilos, entrelazados:
+The presentation has two threads, interleaved:
 
-1. **El reto principal**: recomendador en tiempo real que compite con el baseline.
-2. **Tukey (side challenge)**: nuestro **dashboard de decisiones** — la herramienta con la que sabremos
-   *qué decisión tomar* (subir un peldaño, revertir, explorar). Demo en directo: es a la vez nuestra sala
-   de máquinas y el side challenge.
+1. **The main challenge**: a real-time recommender competing against the baseline.
+2. **Tukey (side challenge)**: our **decision dashboard**, the tool that tells us *which decision to take* (move up a
+   step, roll back, explore). Live demo: it's both our engine room and the side challenge.
 
 ---
 
-## 1. El problema en una frase
+## 1. The problem in one sentence
 
-Una tienda online (~5.000 productos) tiene que elegir, para cada comprador que llega (~3/s, día y noche), los
-**10 productos** que mostrar en su fila de recomendados en **menos de 3 s**; un modelo oculto decide si el
-comprador compra, y el 70 % de la nota es ganarle al baseline los más vendidos.
+An online shop (~5,000 products) has to choose, for each shopper that arrives (~3/s, day and night), the **10
+products** to show in its recommendation row in **under 3 s**; a hidden model decides whether the shopper buys, and 70 %
+of the score is beating the all-time best sellers baseline.
 
-## 2. La historia real: cómo pasamos del baseline a un modelo que aprende del stream
+## 2. The real story: from the baseline to a model that learns from the stream
 
-No partíamos de una teoría: partimos de **medir cada peldaño** y subir solo el que ganaba. Nuestro día:
+We didn't start from a theory: we started by **measuring every step** and only moving up when it won. Our day:
 
-| Hora | Versión en vivo | Qué enseñó |
+| Time | Live version | What it taught us |
 |---|---|---|
-| 12:27 | baseline del starter | más vendidos de siempre en stock (0,61 % en su ventana) |
-| 14:08 | **e-samen-v0** | más vendidos de la categoría de lo último visto; 0 duplicados en el relevo |
-| 16:51-19:07 | v1-A/B/C/D/E/T/M | co-visitas, re-visitas, tendencias, regresión — **cada idea, un brazo medido**; co-visitas como regla: fuera (clics −41 % real); R5 aprendió sesgos del historial: fuera |
-| 18:51-19:07 | A6 → **A7** | árbol LightGBM sobre lo visto (R6) + sin la pieza que restaba a los fríos |
-| 20:47-23:47 | AP2 → **AP3** | **el aprendiz**: regresión logística entrenada SOLO con nuestro feedback en vivo (no con el carrusel) — AP2 ganó a C por +1,20 pts [IC +0,56, +1,87] |
-| 21:43-23:16 | EXP1/EXP1x | exploración de huecos 9-10: medimos su coste (−0,25/−0,35 en las que exploran) y la apagamos |
-| 00:05-… | **cuartos AP3/AP4/AP5/AP6** | el mismo modelo con 4 órdenes distintos, a medir esta noche |
+| 12:27 | starter baseline | all-time best sellers in stock (0.61 % in its window) |
+| 14:08 | **e-samen-v0** | best sellers of the last viewed category; 0 duplicates during the handover |
+| 16:51-19:07 | v1-A/B/C/D/E/T/M | co-visits, revisits, trends, regression: **each idea, one measured arm**; co-visits as a rule: out (clicks -41 %, real); R5 learned the history's biases: out |
+| 18:51-19:07 | A6 -> **A7** | LightGBM tree on what was viewed (R6) + without the piece that hurt cold shoppers |
+| 20:47-23:47 | AP2 -> **AP3** | **the learner**: logistic regression trained ONLY on our live feedback (not on the carousel); AP2 beat C by +1.20 pts [CI +0.56, +1.87] |
+| 21:43-23:16 | EXP1/EXP1x | exploring slots 9-10: we measured its cost (-0.25/-0.35 where it explores) and switched it off |
+| 00:05-... | **quarters AP3/AP4/AP5/AP6** | the same model with 4 different orderings, to be measured tonight |
 
-La escalera en la que encaja (todas las piezas son reutilizables; nada se tira):
+The ladder it fits into (every piece is reusable; nothing gets thrown away):
 
 ```
-N0  Baseline en vivo, sin caerse                          → fiabilidad (10 pts)
-N1  Co-visitas de sesión (como SEÑAL, no como regla)      → conversión (50 pts)
-N2  Tendencias (lift 30 min) · recencia · stock en vivo   → aprender del stream
-N3  Cold start: comprador nuevo (contexto/perfiles) · producto nuevo (embeddings) → 10 pts fríos
-N4  El aprendiz: pesos reentrenados SOLO con nuestro feedback (AP2 → AP3)
-N5  R6 LightGBM "elección en el carrusel" (lambdarank) + favorecedor para los fríos
+N0  Live baseline, never down                                   -> reliability (10 pts)
+N1  Session co-visits (as a SIGNAL, not a rule)                 -> conversion (50 pts)
+N2  Trends (30-min lift), recency, live stock                   -> learning from the stream
+N3  Cold start: new shopper (context/profiles), new product (embeddings) -> 10 cold pts
+N4  The learner: weights retrained ONLY on our feedback (AP2 -> AP3)
+N5  R6 LightGBM "choice within the carousel" (lambdarank) + a booster for cold shoppers
 ```
 
-## 3. El dashboard de Tukey: de cada pregunta a una decisión
+## 3. The Tukey dashboard: from each question to a decision
 
-Criterio 1 de Tukey es "sirve para decidir". Cada panel nace de UNA pregunta del reto y acaba en UNA
-decisión que podemos tomar hoy:
+Tukey's criterion 1 is "it helps decide". Each panel starts from ONE question of the challenge and ends in ONE
+decision we can take today:
 
-| Pregunta del reto | Indicador (panel) | Decisión que alimenta |
+| Challenge question | Indicator (panel) | Decision it feeds |
 |---|---|---|
-| ¿Convertimos mejor? ¿qué versión gana? | conversión por versión y tramo (feedback unido a las respuestas por request_id) | subir el peldaño o **revertir** (regla: 30-60 min en vivo; si no mejora, fuera) |
-| ¿Perdemos peticiones? ¿por qué? | % servido, fallbacks por motivo, p50/p95 de latencia | robustez: timeout, relevo, relleno por fallback precalculado |
-| ¿Dónde miran y dónde compran? | clics y compras por posición 1-10 (carrusel viejo) | curva de posición → corrección IPS y el orden (arriba = probabilidad de compra, no ingreso) |
-| ¿Qué decide la compra? | conversión según carrito/visto/afinidad de categoría del comprador | qué señales entran al aprendiz y con qué peso (ojo al peso: R5 lo aprendió mal sin este panel) |
-| ¿Cuánto pesa el mundo frío? | % is_new_user, % sin recent_views; conversión fría vs cálida | prioridad del especialista de fríos y cuánta exploración se permite |
-| ¿Qué se está moviendo? | vistas 2 h vs 2 h previas por subcategoría | si la tendencia entra al ranking y con qué η |
-| ¿Cómo evoluciona la tienda? | altas, cambios de precio, roturas de stock | cadencia de refresco del catálogo y de re-embebido de productos nuevos |
+| Do we convert better? Which version wins? | conversion per version and slice (feedback joined with our answers by request_id) | move up a step or **roll back** (rule: 30-60 min live; if it doesn't improve, out) |
+| Are we losing requests? Why? | % served, fallbacks by reason, p50/p95 latency | robustness: timeout, handover, precomputed fallback filler |
+| Where do people look and where do they buy? | clicks and purchases per position 1-10 (old carousel) | position curve -> IPS correction and ordering (top = purchase probability, not revenue) |
+| What drives a purchase? | conversion by the shopper's cart/viewed/category affinity | which signals go into the learner and with what weight (note: R5 learned this wrong without this panel) |
+| How big is the cold world? | % is_new_user, % without recent_views; cold vs warm conversion | priority of the cold specialist and how much exploration is allowed |
+| What's moving? | views 2 h vs previous 2 h per subcategory | whether the trend goes into the ranking and with what eta |
+| How does the shop change? | new products, price changes, stock-outs | refresh cadence of the catalog and re-embedding of new products |
 
-> Nota de reglas (sáb ~16:45): una rotura de stock tarda hasta ~2 s en verse en `catalog_updates`, así que
-> ahora un producto agotado hace menos de 5 s ya no invalida la respuesta (ese slot no vende, pero el resto
-> de la lista cuenta). Cambia cómo interpretamos "invalid" en el panel y alivia la presión del refresco de
-> stock en vivo — pero no cambia el objetivo: leer el stock con la cadencia correcta.
+> Rules note (Sat ~16:45): a stock-out takes up to ~2 s to show up in `catalog_updates`, so a product that went out of
+> stock less than 5 s ago no longer voids the answer (that slot doesn't sell, but the rest of the list counts). It
+> changes how we read "invalid" in the panel and eases the pressure on the live stock refresh, but the goal stays the
+> same: read stock at the right cadence.
 
-Todo el panel lee de las MISMAS tablas que usan el evaluador y el servicio (`team_29.feedback`,
-`shop.events`, `shop.catalog_updates`) → **criterio 3 de Tukey (coherencia)**: lo que ves es exactamente el
-número con el que decidimos; ninguna métrica tiene dos definiciones.
+The whole panel reads from the SAME tables the evaluator and the service use (`team_29.feedback`, `shop.events`,
+`shop.catalog_updates`) -> **Tukey's criterion 3 (coherence)**: what you see is exactly the number we decide with; no
+metric has two definitions.
 
-**Prototipo hecho**: `python -m src.panel_tukey` → `data/panel.html` (autocontenido, sin servidor; `--loop 60`
-lo refresca cada minuto para la demo). **[PENDIENTE: captura para la diapositiva + números frescos 30 min
-antes de presentar]**
+**Prototype done**: `python -m src.panel_tukey` -> `data/panel.html` (self-contained, no server; `--loop 60` refreshes
+it every minute for the demo). **[TODO: screenshot for the slide + fresh numbers 30 min before presenting]**
 
-## 4. Cómo validamos antes de arriesgar — y los dos episodios que lo demuestran
+## 4. How we validate before taking risks, and the two episodes that prove it
 
-**La regla que nos salvó dos veces: confiar en el feedback medido > en la documentación > en los datos
-históricos.**
+**The rule that saved us twice: trust measured feedback > the documentation > historical data.**
 
-**Episodio 1 — la recompra.** La pista oficial decía "quien ya compró un producto no lo quiere otra vez"; el
-histórico decía lo contrario (61,6 % de las compras del test eran recompras); el mensaje de los organizadores
-de las 17:40 vino a decir que el modelo oculto puede no estar de acuerdo **con ninguno de los dos** ("trust
-the feedback loop more than the docs, and the docs more than a CSV"). Lo resolvió el feedback de TODO el día:
-de 5.240 veces que enseñamos algo comprado hoy, 1 compra; de 35.746 de algo comprado en el historial, 4 —
-**lo ya comprado no se enseña nunca** (×0,12 en la regresión). El filtro de comprados es correcto.
+**Episode 1: repurchases.** The official hint said "whoever already bought a product doesn't want it again"; the
+history said the opposite (61.6 % of the test purchases were repurchases); the organisers' message at 17:40 basically
+said the hidden model may agree **with neither** ("trust the feedback loop more than the docs, and the docs more than a
+CSV"). The feedback of the WHOLE day settled it: out of 5,240 times we showed something bought today, 1 purchase; out
+of 35,746 of something bought in the history, 4. **Already bought products are never shown** (x0.12 in the
+regression). The bought filter is right.
 
-**Episodio 2 — la fuga de futuro.** Nuestra primera "categoría favorita del comprador" parecía multiplicar la
-compra ×8-11. Era **fuga** (leakage): se medía con la actividad de hoy POSTERIOR a la respuesta, incluida la
-propia compra. Sin fuga (solo historial anterior): ×2,2. La versión con fuga restaba (−21 % en fríos); la
-corregida, ya en A7, dejó de restar. El aprendiz, además, reconstruye el estado de cada comprador **pasando
-el día en orden evento a evento con 3 s de retraso**: jamás ve el futuro.
+**Episode 2: future leakage.** Our first "shopper's favourite category" seemed to multiply purchases by 8-11. It was
+**leakage**: it was measured with today's activity AFTER the answer, including the purchase itself. Without leakage
+(earlier history only): x2.2. The leaky version hurt (-21 % on cold shoppers); the fixed one, already in A7, stopped
+hurting. The learner also rebuilds each shopper's state by **replaying the day in order, event by event, with a 3 s
+delay**: it never sees the future.
 
-Herramientas de validación:
-- El historial está **sesgado** (el carrusel viejo solo enseñaba lo popular): corrección por propensity
-  (IPS/SNIPS) y por posición (hueco 2 vale ×0,68 del 1.º en bruto calibrado, no ×0,45).
-- **Corte temporal** (entrenar con el 70 % inicial del día, validar con el 30 % final) e **intervalos de
-  confianza con bootstrap** (200-400 remuestreos): "sube" solo cuando el IC no incluye el cero.
-- **Cada idea, un brazo A/B en vivo** comparado en los MISMOS minutos (16 co-visitas, 12 re-visitas, 42 el
-  filtro, 15 la exploración…).
-- Y una regla nueva del día: **medir qué señal prefieren los compradores orgánicos** (recall@10 sobre compras
-  orgánicas: subcategoría de lo último visto 20,5 %; afinidad de categoría 9,2 %; co-compra 14,6 %;
-  vecinos por embedding 5,2-9,9 % — descartados como fuente de candidatos).
+Validation tools:
+- The history is **biased** (the old carousel only showed popular stuff): propensity correction (IPS/SNIPS) and
+  position correction (slot 2 is worth 0.68x of the 1st once calibrated, not 0.45x).
+- **Temporal split** (train on the first 70 % of the day, validate on the last 30 %) and **bootstrap confidence
+  intervals** (200-400 resamples): "up" only when the CI doesn't include zero.
+- **Every idea, one live A/B arm** compared over the SAME minutes (16 for co-visits, 12 for revisits, 42 for the
+  filter, 15 for exploration...).
+- And a new rule of the day: **measure which signal organic shoppers prefer** (recall@10 on organic purchases: last
+  viewed subcategory 20.5 %; category affinity 9.2 %; co-purchase 14.6 %; embedding neighbours 5.2-9.9 %, discarded as
+  a candidate source).
 
-**[PENDIENTE: resultados del evaluador offline por versión — Evaluación]**
+**[TODO: offline evaluator results per version, from Evaluation]**
 
-## 5. Lo que ya medimos del stream (hecho, con número)
+## 5. What we've already measured from the stream (done, with numbers)
 
-**La curva de atención por posición** (carrusel histórico, 96.825 impresiones por posición en 3 días): el
-clic cae de 1,08 % en la posición 1 a 0,16 % en la 10, y la compra de 0,48 % a 0,04 %. El orden importa ~7×.
+**The attention curve by position** (historical carousel, 96,825 impressions per position over 3 days): clicks drop
+from 1.08 % in position 1 to 0.16 % in position 10, and purchases from 0.48 % to 0.04 %. Order matters ~7x.
 
 | pos | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
 |---|---|---|---|---|---|---|---|---|---|---|
-| % clic | 1,08 | 0,58 | 0,42 | 0,32 | 0,28 | 0,25 | 0,23 | 0,21 | 0,18 | 0,16 |
-| % compra | 0,48 | 0,23 | 0,16 | 0,12 | 0,10 | 0,09 | 0,07 | 0,06 | 0,06 | 0,04 |
+| % click | 1.08 | 0.58 | 0.42 | 0.32 | 0.28 | 0.25 | 0.23 | 0.21 | 0.18 | 0.16 |
+| % purchase | 0.48 | 0.23 | 0.16 | 0.12 | 0.10 | 0.09 | 0.07 | 0.06 | 0.06 | 0.04 |
 
-**Qué premia el simulador** (nuestro feedback del día, 776.800 productos enseñados, 652 compras — hueco 1):
-en su carrito de HOY sin comprar **2,5 %** · en carrito del historial sin comprar **1,18 %** · sin relación
-previa **0,22 %**. Y la afinidad del comprador con la categoría escalona la compra de 0,01 % a **0,83 %**.
-Esa tabla es exactamente la que alimenta las 11 señales del aprendiz.
+**What the simulator rewards** (our feedback of the day, 776,800 products shown, 652 purchases, slot 1): in TODAY's
+cart, not bought **2.5 %**; in a history cart, not bought **1.18 %**; no previous relationship **0.22 %**. And the
+shopper's affinity with the category scales purchases from 0.01 % to **0.83 %**. That table is exactly what feeds the
+learner's 11 signals.
 
-Resto de números medidos:
+Other measured numbers:
 
-| Qué | Número | Fuente |
+| What | Number | Source |
 |---|---|---|
-| Compradores nuevos (última hora) | 29,79 % | `shop.requests` |
-| "Frío" ≠ "sin vistas": el 83 % de las frías trae vistas | 1,25 | `shop.requests` (medición de Alex) |
-| Catálogo / disponibles | 5.100 / 5.064 | `src/catalogo.py` |
-| Altas / agotados / reposiciones / cambios de precio | 100 / 144 / 108 / 1.241 | `shop.catalog_updates` |
-| Latencia de nuestro servicio (p50/p95) | 773 / 1.091 ms (baseline: 1.238 / 2.232) | `team_29.feedback` |
-| El aprendiz: AUC 0,885 (solo puesto: 0,718); el comprado 1.º en el 40,8 % de las respuestas con compra | +14,1 % de error frente a solo posición | `src/aprendiz.py` |
-| El aprendiz gana a C en vivo | 2,03 % vs 0,83 % [+0,56, +1,87] | A/B de Lester, feedback |
-| Vecinos por embedding en la misma subcategoría | 100 % de la lista por diseño | `src/coldstart.py` |
+| New shoppers (last hour) | 29.79 % | `shop.requests` |
+| "Cold" != "no views": 83 % of cold requests do have views | 1.25 | `shop.requests` (Evaluation) |
+| Catalog / available | 5,100 / 5,064 | `src/catalog.py` |
+| New / out of stock / back in stock / price changes | 100 / 144 / 108 / 1,241 | `shop.catalog_updates` |
+| Our service latency (p50/p95) | 773 / 1,091 ms (baseline: 1,238 / 2,232) | `team_29.feedback` |
+| The learner: AUC 0.885 (position only: 0.718); the bought product ranked 1st in 40.8 % of answers with a purchase | +14.1 % error improvement vs position only | `src/learner.py` |
+| The learner beats C live | 2.03 % vs 0.83 % [+0.56, +1.87] | live A/B, feedback |
+| Embedding neighbours in the same subcategory | 100 % of the list by design | `src/coldstart.py` |
 
-**[PENDIENTE: tabla final de resultados por versión en la mañana de la final]**
+**[TODO: final results table per version on the morning of the final]**
 
-## 6. Uso de RawTree (por qué esta pieza decide el reto)
+## 6. Use of RawTree (why this piece decides the challenge)
 
-- **Consultas que respetan la base**: columnas `Dynamic` con casteo explícito, SIEMPRE filtro por `ts`, una
-  sentencia por petición. Documentamos lo que rompe (`docs/datos.md`): tabla vacía sin columnas, `hasta`
-  inferido como Date, comparar sin castear.
-- **Nada de consultas pesadas en el bucle** (la consulta sin filtro del starter llegó a 10 s): precalcular en
-  SQL y servir desde memoria. `recommend()` en <1 ms; el aprendiz, 1,4 ms p50.
-- **`team_29.scratch` = memoria del equipo**: 5.100 embeddings (4096 dims, normalizados, float16+base64) y
-  perfiles de comprador/producto compartidos entre scripts y servicio, sin ficheros que sincronizar.
-- **`catalog_updates` como fuente de altas**: los productos nuevos no están en `shop.catalog`; los embebemos
-  desde ahí (`embeber_nuevos()`) para que un producto de hace 5 min ya tenga vecinos.
-- **`team_29.feedback` como sala de observación**: es la tabla que reentrena el aprendiz cada pocas horas y a
-  la vez alimenta el dashboard. RawTree no es solo el almacén: es el canal por el que el stream nos habla —
-  y por el que aprendimos más rápido que con cualquier CSV.
+- **Queries that respect the database**: `Dynamic` columns with explicit casts, ALWAYS a `ts` filter, one statement per
+  request. We documented what breaks (`docs/data.md`): an empty table has no columns, `until` inferred as Date,
+  comparing without casting.
+- **No heavy queries in the loop** (the starter's unfiltered query got to 10 s): precompute in SQL and serve from
+  memory. `recommend()` in <1 ms; the learner, 1.4 ms p50.
+- **`team_29.scratch` = the team's memory**: 5,100 embeddings (4096 dims, normalised, float16+base64) and
+  shopper/product profiles shared between scripts and the service, with no files to sync.
+- **`catalog_updates` as the source of new products**: new products aren't in `shop.catalog`; we embed them from there
+  (`embed_new()`) so that a product from 5 minutes ago already has neighbours.
+- **`team_29.feedback` as the observation room**: it's the table that retrains the learner every few hours and also
+  feeds the dashboard. RawTree isn't just storage: it's the channel through which the stream talks to us, and through
+  which we learned faster than from any CSV.
 
-## 7. Qué haríamos con más tiempo (honesto, priorizado)
+## 7. What we'd do with more time (honest, prioritised)
 
-**Lo que NO hicimos a propósito** (la diapositiva honesta — el jurado lo agradece y es 30 % de la nota):
-- **Nada de redes neuronales de sesión** (GRU4Rec/SASRec): en la comparativa de Ludewig/Jannach (2020) los
-  métodos por vecinos compiten, y cuestan 8+ h que no teníamos; un LightGBM con las señales del aprendiz dio
-  el mismo error que la regresión (0,00658 vs 0,00657): no hace falta complicarlo.
-- **Nada de bandits por producto ni Thompson**: en la final hay ~21.600 peticiones y ~430 compras — no hay
-  señal para 5.000 brazos; y la exploración en huecos 9-10 la MEDIMOS en vivo: cuesta 0,15-0,35 puntos donde
-  explora. Por eso solo aprendemos parámetros compartidos y reentrenamos en lote.
-- **Nada de "más datos = mejor" sin IC**: probamos 22 señales del historial sobre AP3 y solo 4-6 pasaron el
-  intervalo (exposición previa +0,91 %, afinidad por compras +0,32 %, vistas 14 días +0,23 %, carrito ×2
-  +0,21 %; juntas +1,66 %). El resto, fuera aunque suene bien.
+**What we deliberately did NOT do** (the honest slide; the jury appreciates it and it's 30 % of the score):
+- **No session neural networks** (GRU4Rec/SASRec): in the Ludewig/Jannach comparison (2020) neighbour methods compete,
+  and they cost 8+ h we didn't have; a LightGBM with the learner's signals gave the same error as the regression
+  (0.00658 vs 0.00657): no need to complicate it.
+- **No per-product bandits or Thompson**: the final has ~21,600 requests and ~430 purchases, not enough signal for
+  5,000 arms; and we MEASURED exploration in slots 9-10 live: it costs 0.15-0.35 points where it explores. That's why we
+  only learn shared parameters and retrain in batch.
+- **No "more data = better" without a CI**: we tried 22 history signals on top of AP3 and only 4-6 passed the interval
+  (previous exposure +0.91 %, purchase affinity +0.32 %, 14-day views +0.23 %, cart x2 +0.21 %; together +1.66 %). The
+  rest stayed out even if they sound good.
 
-Con más tiempo, en orden de valor:
-1. **Especialista de fríos**: el frío no es "sin vistas" — el 83 % de las frías trae vistas y hay señales
-   nuevas para ellos (la de tasa en vivo, AP8, ya está especificada para Evaluación).
-2. **El blend de dos cabezas** (árbol R6 + aprendiz, entrenados con datos distintos: carrusel vs feedback):
-   sus errores se compensan; validación offline primero, brazo después.
-3. **Recargar los modelos sin reiniciar el servicio** (hoy los pesos solo se leen al arrancar): reentrenar
-   cada hora en vivo sin tocar el tráfico.
-4. **Redirección al panel**: alertas automáticas (caída de conversión, subida de fallbacks) para reaccionar
-   en la final sin vigilar manualmente.
+With more time, by value:
+1. **Cold specialist**: cold isn't "no views": 83 % of cold requests have views and there are new signals for them (the
+   live rate one, AP8, is already specified for Evaluation).
+2. **Two-headed blend** (R6 tree + learner, trained on different data: carousel vs feedback): their errors offset each
+   other; offline validation first, arm later.
+3. **Reloading models without restarting the service** (weights are only read at start-up today): retrain every hour
+   live without touching traffic.
+4. **Alerts on the panel**: automatic alerts (conversion drop, fallback rise) to react during the final without
+   watching by hand.
 
 ---
 
-### Apéndice · plan de la demo (domingo tarde)
+### Appendix: demo plan (Sunday afternoon)
 
-- 1 min: problema + la historia de un día (diapositiva 2: cada peldaño, su medición).
-- 2 min: dashboard en directo sobre `feedback` real (diapositiva 3): conversión por versión en la última
-  hora y la decisión que tomamos con ello (incluir el caso real de revertir la exploración).
-- 1 min: producto nuevo creado hoy → vecinos por descripción en `scratch` (demo del cold start).
-- 1 min: cómo validamos (diapositiva 4, con los dos episodios: recompra y fuga).
-- 1 min: qué medimos del stream (diapositiva 5: curva de posición + qué premia el simulador).
-- Cierre: uso de RawTree (diapositiva 6) + lo honesto (diapositiva 7).
+- 1 min: problem + the story of one day (slide 2: each step, its measurement).
+- 2 min: live dashboard on real `feedback` (slide 3): conversion per version in the last hour and the decision we took
+  with it (including the real case of rolling back exploration).
+- 1 min: a product created today -> description neighbours in `scratch` (cold start demo).
+- 1 min: how we validate (slide 4, with the two episodes: repurchases and leakage).
+- 1 min: what we measured from the stream (slide 5: position curve + what the simulator rewards).
+- Close: use of RawTree (slide 6) + the honest slide (slide 7).
 
-**Revisión: checkpoint de las 08:00 (congelado).** Dueño: Artai (Datos y relato).
-Fuentes para llenar los [PENDIENTE]: `docs/EXPERIMENTOS.md` (offline y en vivo) y `team_29.feedback`.
+**Review: 08:00 checkpoint (frozen).** Owner: Data.
+Sources for the [TODO]s: `docs/EXPERIMENTS.md` (offline and live) and `team_29.feedback`.

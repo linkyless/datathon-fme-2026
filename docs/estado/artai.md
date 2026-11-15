@@ -1,7 +1,7 @@
 # Estado de Artai
 
 - **Rol:** Datos y relato (docs/guias/datos.md)
-- **Actualizado:** sáb ~19:15
+- **Actualizado:** dom ~04:15
 
 ## Haciendo ahora
 - **Verificación multi-ventana de los métodos del leaderboard (dom ~03:50)**: 6 ventanas de 1 h pienso (21:28→03:28), solo versiones con ≥120 pet.
@@ -80,6 +80,18 @@
 - En este Linux no había pip: instalado con get-pip `--user` (requests y numpy ya están en requirements).
 
 ## Necesito de alguien
+- **Alex (Evaluación) — propuesta AP8: señal `tasa_vivo` para el aprendiz, SOLO fríos** (especificación completa, sáb noche → dom 04:15; mi parte ya está: los datos vienen de `team_29.feedback` que tú ya descargas en cada reentreno).
+  - **Por qué**: la verificación multi-ventana del leaderboard (mi estado, arriba) muestra que team_26/team_01 tienen especialistas solo-fríos ESTABLES en 3,0-3,5% durante 6 h (re-estimando pesos por producto cada hora). La tasa estática del carrusel (`tasa_ips`) no aporta a AP3 (medido, IC con el 0); la que propongo se calcula con lo que ENSEÑAMOS nosotros hoy: mide al modelo oculto de AHORA.
+  - **Definición** (por reentreno, sobre feedback de `served_by = 'team'` de las ÚLTIMAS 4 h, solo peticiones frías = sin `recent_views` o is_new_user):
+    - `enseñados(p)` = nº de huecos en los que enseñamos el producto p.
+    - `aciertos(p)` = compras de p + 0,3 × clics de p (el 0,3 es tu propio OBJETIVO_CLIC, para dar señal a los clics).
+    - `t_global` = tasa de conversión fría global del mismo tramo (compras/peticiones frías).
+    - **`tasa_vivo(p) = (aciertos(p) + k·t_global) / (enseñados(p) + k)` con k = 30 impresiones de prior**.
+    - Se recorta a [0, 10 × t_global] y se expone COMO SEÑAL multiplicada por el indicador `frio` (en cálidos vale 0, para no duplicar lo que ya saben otras señales).
+  - **Producción y consulta**: en el entrenamiento entra como una señal más (fila nueva en SENALES); 30 líneas dentro del bucle del `Mundo`/matriz que ya itera el feedback. El peso lo aprende el retréning; NO se fuerza.
+  - **Validación (tu protocolo)**: entreno 70 % inicial del día / prueba 30 % final, IC 95 % bootstrap por respuesta (400), AP8 = AP7 + `tasa_vivo` frente a AP7C (= AP7 mismo entreno sin la señal). Métricas: logloss Y compras/100 estimadas en fríos; el 1.º del modelo no tiene por qué cambiar (es calibración de la cola).
+  - **A/B en vivo para Lester** (si tu validación da el ok): fríos 50/50 `{"_aprendiz": "ap8"}` frente a `{"_aprendiz": "ap7"}`, cálidos con el árbol como en A7. Etiquetas -AP8/-AP7 y se lee por la API (la misma mecánica de EXP1, con las 4 h de ventana).
+  - **Si las 08:00 llegan antes**: nada queda a medias — la señal apagada no molesta y el A/B puede correr tras el congelado si Evaluación lo aprueba antes de las 10:00.
 - **Operador (Lester)**: `coldstart.embeber_nuevos()` cada ~5 min en el servicio (hecho según tu estado) y `coldstart.construir_perfiles(None)` cada ~30-60 min (R6).
 - **Leonardo**: cuando R6 use los perfiles, los campos están en el Estado (`perfiles_comprador`, `perfiles_producto`); el mecanismo `frio_historial` está en el código APAGADO para que lo pruebes como variante si quieres.
 - **Alex**: re-medir el segmento frío con el test SIN recompras (tu propio apunte) y, si quieres probar `frio_historial`, es un brazo con params={"frio_historial": 0.3}.

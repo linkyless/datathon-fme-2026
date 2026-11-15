@@ -50,6 +50,13 @@ ANCLA_AP7 = {"n": 125_389, "compras": 1_367, "odds": {"misma_sub": 1.39}}
 RESP_POR_HORA = 10_755  # medido en el leaderboard (3 peticiones/s)
 INICIO_H = 12.45        # 12:27 BCN, cuando empezaron nuestras respuestas
 
+# Cambios grandes del modelo (para los timestamps del vídeo): hora = el punto real donde ocurren
+CAMBIOS = [
+    {"n": 87_058, "etiqueta": "AP2 · primer modelo aprendido (87.058 resp.)"},
+    {"n": 101_654, "etiqueta": "AP3 · reentreno completo (101.654 resp.)"},
+    {"n": 125_389, "etiqueta": "AP7 · entra la señal misma_sub (+subcategoría)"},
+]
+
 
 def _odds_odds(w_log: float) -> float:
     return math.exp(w_log)
@@ -68,6 +75,18 @@ def serie() -> list[dict]:
     puntos = []
     n_total = ANCLA_AP7["n"]
     t_h = INICIO_H
+    # estado inicial honesto: con ~1.500 respuestas (~70 compras) el ajuste solo produce RUIDO
+    # alrededor del neutro (×0,3-3,0): es el "cómo era el modelo al comenzar" del enunciado.
+    # misma_sub no existe todavía (llega con AP7, sábado noche).
+    n0 = 1_500
+    pesos0 = {}
+    for nombre, w_final, tau, _txt in SENALES:
+        if nombre == "misma_sub":
+            continue
+        ruido = rng.gauss(0, 0.35) * math.sqrt(max(tau, 1.0) / n0)
+        pesos0[nombre] = max(_odds_odds(math.log(w_final) * n0 / (n0 + tau) + ruido), 1e-4)
+    puntos.append({"hora": "14 nov 12:36", "n": n0, "compras": round(n0 * 0.0086),
+                   "mejora_pct": 0.0, "odds": pesos0})
     while True:
         n = int(min((t_h - INICIO_H) * RESP_POR_HORA, n_total))
         if n < 3_000:  # antes de esto el ajuste no es creíble (pocos cientos de compras)
@@ -132,10 +151,14 @@ button:hover{background:#334155}
 <div class='hud' id='pie'>Cada punto es un reentreno con TODO el feedback acumulado hasta ese momento
 (reconstrucción offline anclada a AP2/AP3/AP7 reales; lo que hay entre anclas es simulación).
 Grosor y color de las conexiones: peso en ×odds — azul refuerza la compra, naranja la reduce.
-El nodo se dimensiona por su peso absoluto; `misma_sub` aparece de noche (AP7), como pasó de verdad.</div>
+El nodo se dimensiona por su peso absoluto; `misma_sub` aparece de noche (AP7), como pasó de verdad.
+<div style='margin-top:6px'><span style='color:#93c5fd'>●</span> azul = refuerza la compra (×odds &gt; 1)
+&nbsp;&nbsp;<span style='color:#fb923c'>●</span> naranja = la reduce (×odds &lt; 1)
+&nbsp;&nbsp;grosor de la línea ∝ |peso|</div></div>
+<div class='hud' id='cambio' style='top:110px;left:24px;display:none;background:#1e293b;border:1px solid #fb923c;border-radius:8px;padding:8px 14px;font-size:12px;color:#fdba74'></div>
 <div class='hud' id='controles'><div><button id='play'>▶ reproducir</button> <button id='fin'>⏭ final</button></div>
 <div style='margin-top:6px'><input id='slider' type='range' min='0' max='1000' value='0'></div></div>
-<script>window.EV = __DATOS__;</script>
+<script>window.EV = __DATOS__; window.CAMBIOS = __CAMBIOS__;</script>
 <script>
 const E = window.EV, N = E.length, CV = document.getElementById('c'), X = CV.getContext('2d');
 const POS = []; // 12 señales en arco alrededor del nodo central
@@ -194,6 +217,10 @@ function dibujar(u){
     `<div><b>${st.compras.toLocaleString('es-ES')}</b><br><span>compras en el feedback</span></div>` +
     `<div><b>+${st.mejora.toFixed(1)} %</b><br><span>mejora de error frente al puesto</span></div>` +
     `<div><b>${st.hora}</b><br><span>hora del feedback (BCN)</span></div>`;
+  // badge del último CAMBIO GRANDE superado
+  const cam = window.CAMBIOS.filter(c => st.n >= c.n).pop();
+  const cb = document.getElementById('cambio');
+  if (cam){ cb.style.display = 'block'; cb.textContent = 'CAMBIO: ' + cam.etiqueta; } else cb.style.display = 'none';
   X.fillStyle = '#334155'; X.font = '11px monospace'; X.textAlign = 'left';
   X.fillText('log-odds | peso | ×odds:grosores ∝ |peso| — interpolación entre anclas reales AP2/AP3/AP7', 24, 690);
 }
@@ -214,7 +241,8 @@ def main() -> None:
     puntos = serie()
     DATA.mkdir(exist_ok=True)
     (DATA / "evolucion.json").write_text(json.dumps(puntos, ensure_ascii=False, indent=1), encoding="utf-8")
-    html = _PLANTILLA.replace("__DATOS__", json.dumps(puntos, ensure_ascii=False))
+    html = _PLANTILLA.replace("__DATOS__", json.dumps(puntos, ensure_ascii=False)) \
+                    .replace("__CAMBIOS__", json.dumps(CAMBIOS, ensure_ascii=False))
     (DATA / "evolucion.html").write_text(html, encoding="utf-8")
     print(f"evolucion.json + evolucion.html: {len(puntos)} puntos "
           f"({puntos[0]['n']} -> {puntos[-1]['n']} respuestas)")
@@ -239,7 +267,7 @@ def _video(puntos: list[dict], fps: int = 30, segundos: int = 30) -> None:
         return ImageFont.load_default()
 
     W, H = 1920, 1080
-    CX, CY, RX, RY = W // 2, int(H * 0.62), 640, 480
+    CX, CY, RX, RY = W // 2, int(H * 0.66), 600, 380  # el grafo baja: los KPIs arriba a la derecha no tapan
     f_tit = fuente(26); f_sub = fuente(15); f_kpi = fuente(30); f_lbl = fuente(14); f_pie = fuente(13)
     azulp, azulf = (96, 165, 250), (147, 197, 253)
     naranjap, naranjaf = (251, 146, 60), (253, 186, 116)
@@ -247,7 +275,7 @@ def _video(puntos: list[dict], fps: int = 30, segundos: int = 30) -> None:
 
     def fondo(d, st, u):
         d.rectangle([0, 0, W, H], fill=(11, 18, 32))
-        d.rectangle([0, 0, W, int(H * 0.72)], fill=(13, 21, 38))
+        d.rectangle([0, 0, W, int(H * 0.78)], fill=(13, 21, 38))
         d.text((36, 24), "Evolución interna del aprendiz — RECONSTRUCCIÓN SINTÉTICA anclada a AP2/AP3/AP7",
                font=f_tit, fill=(147, 197, 253))
         d.text((36, 62), "regresión logística · 12 señales → P(compra) · cada punto = reentreno con el feedback acumulado hasta esa hora",
@@ -256,11 +284,28 @@ def _video(puntos: list[dict], fps: int = 30, segundos: int = 30) -> None:
                 (f"{st['compras']:,}".replace(",", "."), "compras en el feedback"),
                 (f"+{st['mejora_pct']:.1f} %", "mejora de error vs solo puesto"),
                 (st["hora"], "hora del feedback (BCN)")]
-        x = W - 640
+        x = W - 560  # esquina superior derecha, fuera del grafo
         for i, (v, t_) in enumerate(kpis):
             yy = 24 + i * 92
             d.text((x, yy), v, font=f_kpi, fill=(241, 245, 249))
             d.text((x, yy + 40), t_, font=f_sub, fill=(148, 163, 184))
+        # badge del último CAMBIO GRANDE superado (timestamps reales: AP2/AP3/AP7)
+        cambio = None
+        for c in CAMBIOS:
+            punto = next((p for p in puntos if p["n"] == c["n"]), None)
+            if punto and st["hora"] >= punto["hora"]:
+                cambio = c
+        if cambio:
+            d.rounded_rectangle([36, 108, 36 + 700, 164], radius=8, fill=(30, 41, 59), outline=(251, 146, 60))
+            d.text((52, 122), "CAMBIO: " + cambio["etiqueta"], font=f_sub, fill=(253, 186, 116))
+        # leyenda inferior izquierda: qué significa cada color de nodo
+        d.ellipse([36, H - 132, 56, H - 112], fill=azulf + (255,))
+        d.text((64, H - 132), "nodo azul = señal que REFUERZA la compra (peso positivo, ×odds > 1)",
+               font=f_lbl, fill=(148, 163, 184))
+        d.ellipse([36, H - 104, 56, H - 84], fill=naranjaf + (255,))
+        d.text((64, H - 104), "nodo naranja = señal que la REDUCE (peso negativo, ×odds < 1)",
+               font=f_lbl, fill=(148, 163, 184))
+        d.text((36, H - 76), "grosor de la línea ∝ |peso| · radio del nodo ∝ importancia", font=f_lbl, fill=(71, 85, 105))
 
     def posiciones(n_senales):
         out = []
@@ -319,10 +364,20 @@ def _video(puntos: list[dict], fps: int = 30, segundos: int = 30) -> None:
     ruta = DATA / "evolucion.mp4"
     w = imageio.get_writer(str(ruta), fps=fps, codec="libx264", quality=8,
                            macro_block_size=None, ffmpeg_params=["-pix_fmt", "yuv420p"])
+    # línea de tiempo: 2 s del estado inicial + 26 s de evolución + 2 s del estado final
+    HOLD = 2 * fps
+    evolucion_marcos = marcos - 2 * HOLD
+
+    def fase(k: int) -> float:
+        if k < HOLD:
+            return 0.0  # el estado inicial, quieto 2 s
+        if k >= marcos - HOLD:
+            return 1.0  # el estado final, quieto 2 s
+        return (k - HOLD) / evolucion_marcos
+
     import sys
     for k in range(marcos):
-        u = k / (marcos - 1)
-        w.append_data(__import__("numpy").asarray(fotograma(u)))
+        w.append_data(__import__("numpy").asarray(fotograma(fase(k))))
         if k % 150 == 0:
             print(f"  fotograma {k}/{marcos}", flush=True)
     w.close()

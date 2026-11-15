@@ -4,6 +4,11 @@
 - **Actualizado:** sáb ~19:15
 
 ## Haciendo ahora
+- **Verificación multi-ventana de los métodos del leaderboard (dom ~03:50)**: 6 ventanas de 1 h pienso (21:28→03:28), solo versiones con ≥120 pet.
+  - **Compatibles con suerte descartadas** (1 sola ventana o pocas peticiones): v23-pop-log 2,73, skore_money_v28, m76d67a, spikes-s2...
+  - **Consistentes toda la noche**: los ESPECIALISTAS SOLO-FRÍOS de team_26 (me15cb 3,49 · m32afc 3,44 · m0c62b 3,19 en 4 ventanas · m892c3 3,13 — cientos-miles de pet. cada uno, iterating overnight) y team_01 (shaleE-n 3,01 · shale-n 2,63 en 6 ventanas y 8.656 pet.). Techo de los modelos GENERALES: ~2,4 (skore_money_v36 2,41 en 4 ventanas, PORFA 2,39, lynch-v8 2,38, blend-nb 2,32 en 3).
+  - Conclusión medida: (1) el frío especializado gana 3,0-3,5 de forma ESTABLE (no es suerte); (2) ningún modelo "general" pasa de ~2,4 → el hueco entre 2,4 y 3,4 está TODO en el segmento frío; (3) las versiones specialist turnaround cada hora (nombres m-hash cambiantes) = re-estimación de pesos/tasas por producto del feedback, no exploración.
+  - Palanca implementable para nosotros: señal `tasa_vivo` en el aprendiz (compras cuando lo enseñamos hoy ÷ enseñados hoy, suavizada hacia la predicción del modelo; solo para el segmento frío) → Alex, validación por tiempo; y Lester enruta los fríos al aprendiz (vía A/B, como EXP1). Nosotros en fríos vamos por ~2,3; el hueco hasta 3,4 × 30 % del tráfico ≈ +0,35 global.
 - **Lectura madrugada del leaderboard (dom ~05:30, tras apuntar lo de los nombres) — datos en /tmp, fuente /api/state?by=model**
   - Equipo a las 02:18-03:18: **1,17** (puesto 24) mientras nuestros brazos -AP7/-AP7C/-AP7S van **1,70-1,84** (5.576 pet.). ⚠️ La cuenta no sale: si todo el tráfico fuese esos tres brazos, la media sería ~1,78. Hay ~40 % del tráfico cayendo a algo peor (fallback/missing de madrugada u otra versión oculta). **Verificar con src/panel --horas 1: es el mayor silencio que tenemos.** (baseline: 0,54).
   - Los nombres de versión de los de arriba, descodificados:

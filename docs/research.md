@@ -1,175 +1,379 @@
-# Cómo ganar el datathon de recomendación en tiempo real: plan priorizado con evidencia
+# How to win a real-time recommendation datathon: a prioritised plan with evidence
 
-**Respuesta corta: no vayáis directos al «modelo grande».** Construid primero, en unas 6 horas, una política que tenga en cuenta la sesión y sea robusta. Tiene tres partes: candidatos por co‑visitas y por la misma subcategoría, una puntuación explícita P(compra | producto, contexto) que tenga en cuenta el precio, y una lista ordenada de mayor a menor con exclusión de lo ya comprado. Validadla con un estimador off‑policy por posición, calibrado contra los puntos reales del leaderboard. Solo después añadid un ranker LightGBM con features por atributos, nunca por ID, y un aprendizaje online de pocos parámetros. Los números del leaderboard sugieren que el modelo oculto premia mucho la afinidad fina con la sesión (subcategoría, marca, rango de precio) y castiga el precio bastante menos de lo que parece. Esto último es una inferencia, no un dato confirmado.
+**Short answer: don't go straight for the "big model".** First build, in about 6 hours, a session-aware and robust
+policy. It has three parts: candidates from co-visitation and from the same subcategory, an explicit score
+P(purchase | product, context) that takes price into account, and a list sorted from highest to lowest with already
+bought products excluded. Validate it with a position-based off-policy estimator, calibrated against the real
+leaderboard points. Only then add a LightGBM ranker with attribute features, never IDs, and online learning of a few
+parameters. The leaderboard numbers suggest the hidden model strongly rewards fine-grained affinity with the session
+(subcategory, brand, price range) and penalises price much less than it seems. The latter is an inference, not a
+confirmed fact.
 
 ## TL;DR
 
-- **Prioridad 1 (≈6 h, ganancia mayor):** candidatos de la sesión y co‑visitas ponderadas por tipo de evento y recencia (patrón ganador de OTTO), puntuados con afinidad de subcategoría, marca y precio. Excluid lo comprado y ordenad por P(compra) estimada, porque la atención cae con la posición. En sesiones cortas los métodos simples por vecinos compiten con las redes neuronales (Ludewig, Mauro, Latifi y Jannach, 2019/2020).
-- **Prioridad 2 (≈4 h, imprescindible para el jurado y para no fallar a ciegas):** un evaluador offline. Combinad un modelo de posición (PBM) estimado del log con IPS/SNIPS por ítem‑posición, intervalos bootstrap y una prueba de calibración: ¿ordena igual que el leaderboard a «baseline 0,66 %» y «más vendidos de la categoría 0,79 %»? Las fórmulas de IPS sobre la lista entera tienen varianza enorme; Li et al. (KDD 2018) demuestran que los estimadores con modelo de clic son más eficientes si el modelo se cumple.
-- **Prioridad 3 (≈6–8 h, después):** un ranker LightGBM entrenado sobre el log de eventos con features que generalizan, más un aprendizaje online de pocos parámetros (tendencias EWMA, peso del precio, stock) con Thompson sampling descontado y una exploración pequeña en los slots bajos. En la final habrá solo unas 21.600 peticiones (≈450 compras si convertís al 2 %), demasiado pocas para aprender producto a producto: aprended parámetros compartidos, no 5.000 brazos.
+- **Priority 1 (~6 h, biggest gain):** session candidates and co-visits weighted by event type and recency (OTTO's
+  winning pattern), scored with subcategory, brand and price affinity. Exclude what was bought and sort by estimated
+  P(purchase), because attention drops with position. In short sessions simple neighbour methods compete with neural
+  networks (Ludewig, Mauro, Latifi and Jannach, 2019/2020).
+- **Priority 2 (~4 h, essential for the jury and to avoid flying blind):** an offline evaluator. Combine a position
+  model (PBM) estimated from the log with item-position IPS/SNIPS, bootstrap intervals and a calibration check: does it
+  rank "baseline 0.66 %" and "category best sellers 0.79 %" like the leaderboard? Whole-list IPS has huge variance;
+  Li et al. (KDD 2018) show click-model estimators are more efficient if the model holds.
+- **Priority 3 (~6-8 h, later):** a LightGBM ranker trained on the event log with features that generalise, plus
+  online learning of a few parameters (EWMA trends, price weight, stock) with discounted Thompson sampling and a little
+  exploration in the low slots. The final will have only about 21,600 requests (~450 purchases at 2 % conversion), too
+  few to learn product by product: learn shared parameters, not 5,000 arms.
 
-## Key Findings
+## Key findings
 
-### 1. Qué nos dicen los números del leaderboard (análisis propio)
+### 1. What the leaderboard numbers tell us (own analysis)
 
-| Política | Conversión | €/petición | € por compra (= €/petición ÷ conversión) |
+| Policy | Conversion | EUR/request | EUR per purchase (= EUR/request / conversion) |
 |---|---|---|---|
-| Baseline (más vendidos) | 0,66 % | 0,147 | ≈22 € |
-| Más vendidos de la categoría de lo último visto | 0,79 % | — | — |
-| v2‑HYDRA‑explora | 0,85 % | 0,32 | ≈38 € |
-| Referencia organizadores | 2,09 % | 0,93 | ≈45 € |
+| Baseline (best sellers) | 0.66 % | 0.147 | ~22 |
+| Best sellers of the last viewed category | 0.79 % | - | - |
+| v2-HYDRA-explora | 0.85 % | 0.32 | ~38 |
+| Organisers' reference | 2.09 % | 0.93 | ~45 |
 
-Interpretación. Es **inferencia**, no evidencia directa del simulador:
+Interpretation. This is **inference**, not direct evidence from the simulator:
 
-- **El precio no es un freno fuerte para el modelo oculto.** La referencia triplica la conversión mostrando productos de un ticket medio de unos 45 €, el doble que el baseline. Si el simulador castigara mucho el precio, no se podría triplicar la conversión con productos el doble de caros. Lo más probable es que exista una sensibilidad al precio moderada y quizá heterogénea por device o region, o que el precio interactúe con la afinidad: «caro pero de lo que estoy mirando» convierte.
-- **La categoría sola explica poco** (+20 %), mientras que la referencia consigue +217 %. La afinidad que premia el modelo oculto es más fina: probablemente subcategoría (90), marca y rango de precio coherentes con `recent_views`. Además, la referencia podría usar los propios productos vistos (re‑visita), la señal más fuerte en OTTO.
-- **El bandit con exploración (HYDRA) sube el ingreso más que la conversión.** Encaja con un simulador donde aprender «qué se vende» online ayuda algo, pero sin modelo de sesión no se llega lejos.
-- **Gradient boosting directo falló** por dos causas típicas: aprender el sesgo de popularidad del log (que el carrusel antiguo creó) y la latencia (61 % de respuestas a tiempo). Es la ilustración exacta de «generalizar, no memorizar».
+- **Price isn't a strong brake for the hidden model.** The reference triples conversion while showing products with an
+  average ticket of about 45 EUR, twice the baseline's. If the simulator punished price hard, you couldn't triple
+  conversion with products twice as expensive. Most likely there's a moderate price sensitivity, maybe varying by
+  device or region, or price interacts with affinity: "expensive but what I'm looking at" converts.
+- **Category alone explains little** (+20 %), while the reference gets +217 %. The affinity the hidden model rewards
+  is finer: probably subcategory (90 of them), brand and a price range consistent with `recent_views`. The reference
+  might also use the viewed products themselves (revisits), the strongest signal in OTTO.
+- **The bandit with exploration (HYDRA) raises revenue more than conversion.** It fits a simulator where learning
+  "what sells" online helps a bit, but without a session model you don't get far.
+- **Straight gradient boosting failed** for two typical reasons: learning the log's popularity bias (which the old
+  carousel created) and latency (61 % of answers on time). It's the exact illustration of "generalise, don't memorise".
 
-**Prueba rápida para confirmar las hipótesis** (1 hora en práctica): servid variantes A/B por hash de `user_id`: (a) misma subcategoría que la última vista, ordenada por popularidad; (b) lo mismo, pero ordenado por precio descendente dentro del top‑30; (c) re‑visita: los productos vistos en la sesión y no comprados primero. Con unas 10.800 peticiones/hora, cada brazo recibe unas 3.600. A una conversión del 1–2 % (36–72 compras por brazo), el error estándar de la diferencia es de unos 0,3 puntos: detectaréis efectos de ×1,5 o más, no matices. Para matices, usad los **clics** como señal intermedia, que son bastante más frecuentes.
+**Quick test to confirm the hypotheses** (1 hour of practice): serve A/B variants by `user_id` hash: (a) same
+subcategory as the last view, sorted by popularity; (b) the same, sorted by descending price within the top 30; (c)
+revisits: products viewed in the session and not bought go first. With about 10,800 requests/hour, each arm gets about
+3,600. At 1-2 % conversion (36-72 purchases per arm), the standard error of the difference is about 0.3 points: you'll
+detect effects of 1.5x or more, not nuances. For nuances, use **clicks** as an intermediate signal, they're much more
+frequent.
 
-### 2. Cómo modelan los simuladores el clic y la compra (pregunta A1)
+### 2. How simulators model clicks and purchases (question A1)
 
-- **Position‑based model (PBM).** P(clic | usuario u, ítem i, rango r) = A(u,i) × E(r): el atractivo del ítem multiplicado por la probabilidad de examinar la posición. SARDINE (Deffayet et al., 2023) lo usa literalmente como su modelo de clic. En sus experimentos, un modelo PBM aprendido del log «identifica correctamente los sesgos» y casi alcanza al oráculo, mientras que un modelo ingenuo de CTR por documento apenas mejora a la política de log.\[1\] **Implicación:** con PBM, la lista óptima es simplemente ordenar por A(u,i) de mayor a menor, porque el producto de dos secuencias se maximiza emparejando mayor con mayor (desigualdad de reordenamiento). La diversidad no ayuda *por sí misma*.
-- **Cascada** (Kveton et al., ICML 2015, «Cascading Bandits»). El usuario recorre la lista de arriba abajo y se detiene en el primer ítem atractivo.\[2\] **Implicación:** el valor de la lista es 1 − ∏(1 − A_i). Poner diez casi‑clones del mismo producto desperdicia slots si el usuario tiene una intención distinta, así que la diversidad ayuda cuando hay incertidumbre sobre la intención.
-- **Logit multinomial (MNL) y logit condicional.** Es lo que trae RecSim (Ie et al., 2019): el usuario elige como mucho un ítem de la lista con probabilidad proporcional a exp(utilidad), frente a una opción «no elegir nada». RecSim también incluye un «exponential cascade model» para capturar el sesgo de posición.\[3\]\[4\] **Implicación:** P(compra de la lista) = Σv_i / (v_0 + Σv_j), que crece con cada v_i, así que maximizar la conversión equivale otra vez a escoger los de mayor utilidad. Cuando se optimiza el ingreso con MNL, a veces conviene *quitar* productos baratos (problema de surtido), lo que encaja con el desempate por ingreso.
-- **RecoGym** (Rohde et al., 2018) separa la conducta «orgánica» (lo que el usuario ve por su cuenta) de la respuesta a la recomendación («bandit»), con embeddings distintos. Cuando ambas divergen, los métodos puramente orgánicos fallan (BLOB, 2020).\[5\]\[6\] **Implicación para vosotros:** las co‑visitas del log de eventos (orgánicas) no tienen por qué coincidir con lo que compra el simulador desde el carrusel. Hay que validarlas contra el log del carrusel y el feedback en vivo.
+- **Position-based model (PBM).** P(click | user u, item i, rank r) = A(u,i) x E(r): the item's attractiveness times
+  the probability of examining the position. SARDINE (Deffayet et al., 2023) uses it literally as its click model. In
+  their experiments a PBM learned from the log "correctly identifies the biases" and almost reaches the oracle, while a
+  naive per-document CTR model barely improves on the logging policy.\[1\] **Implication:** under PBM the optimal list
+  is simply sorting by A(u,i) from highest to lowest, because the product of two sequences is maximised by pairing
+  largest with largest (rearrangement inequality). Diversity doesn't help *by itself*.
+- **Cascade** (Kveton et al., ICML 2015, "Cascading Bandits"). The user scans the list top to bottom and stops at the
+  first attractive item.\[2\] **Implication:** the value of the list is 1 - prod(1 - A_i). Putting ten near-clones of
+  the same product wastes slots if the user has a different intent, so diversity helps when the intent is uncertain.
+- **Multinomial logit (MNL) and conditional logit.** That's what RecSim ships (Ie et al., 2019): the user picks at most
+  one item from the list with probability proportional to exp(utility), against a "pick nothing" option. RecSim also
+  includes an "exponential cascade model" to capture position bias.\[3\]\[4\] **Implication:** P(purchase from the list)
+  = sum v_i / (v_0 + sum v_j), which grows with every v_i, so maximising conversion is again picking the highest
+  utilities. When optimising revenue under MNL it sometimes pays to *drop* cheap products (assortment problem), which
+  fits the revenue tie-break.
+- **RecoGym** (Rohde et al., 2018) separates "organic" behaviour (what the user views on their own) from the response to
+  recommendations ("bandit"), with different embeddings. When they diverge, purely organic methods fail (BLOB,
+  2020).\[5\]\[6\] **Implication for us:** co-visits from the event log (organic) need not match what the simulator buys
+  from the carousel. They have to be validated against the carousel log and the live feedback.
 
-**Conclusión práctica:** en los tres modelos lo prioritario es poner primero los ítems de mayor P(compra). Las diferencias aparecen en la cola de la lista (slots 6–10): ahí conviene diversificar (cascada/MNL) y explorar, porque cuesta poco (E(r) bajo).
+**Practical conclusion:** in all three models the priority is putting the highest P(purchase) items first. The
+differences show up in the tail of the list (slots 6-10): that's where diversifying (cascade/MNL) and exploring make
+sense, because it's cheap (low E(r)).
 
-### 3. Inferir el modelo oculto desde el log (A2)
+### 3. Inferring the hidden model from the log (A2)
 
-- **Curva de posición E(r).** Como el carrusel tenía «algo de azar», el mismo producto apareció en posiciones distintas. Comparad su tasa de clic/compra entre posiciones ponderando por 1/propensity («intervention harvesting», Agarwal et al., WSDM 2019, «Estimating Position Bias without Intrusive Interventions»). Alternativa: regression EM (Wang et al., WSDM 2018), que estima a la vez E(r) y la relevancia sin aleatorizar y que en su evaluación sobre búsqueda personal superó a las estimaciones con aleatorización por pares en casi todas las posiciones.\[7\]\[8\] Para 10 posiciones y 2M impresiones, un EM sencillo en numpy (PBM: clic = examen × atractivo) converge en minutos.
-- **Sensibilidad al precio por device/region.** Ajustad una regresión logística de compra por impresión con features [posición (one‑hot), log(precio), log(precio) × device, log(precio) × region, misma subcategoría que lo último visto, misma marca, |log precio − log precio medio de la sesión|], ponderada por 1/propensity. Los coeficientes son interpretables y explicables al jurado.
-- **Afinidad por categoría según lo visto.** Calculad la tasa de compra condicionada a «el producto mostrado comparte subcategoría/marca/rango de precio con k de las vistas recientes».
-- **En vivo:** repetid la regresión cada 30 minutos sobre vuestro propio feedback. Vuestros datos no tienen propensities si la política es determinista; por eso conviene que vuestra política tenga una aleatorización pequeña y *registrada* (ver F).
+- **Position curve E(r).** Since the carousel had "some randomness", the same product showed up in different
+  positions. Compare its click/purchase rate across positions weighting by 1/propensity ("intervention harvesting",
+  Agarwal et al., WSDM 2019, "Estimating Position Bias without Intrusive Interventions"). Alternative: regression EM
+  (Wang et al., WSDM 2018), which estimates E(r) and relevance together without randomisation and in their personal
+  search evaluation beat pairwise-randomisation estimates in almost every position.\[7\]\[8\] For 10 positions and 2M
+  impressions, a simple numpy EM (PBM: click = examination x attractiveness) converges in minutes.
+- **Price sensitivity per device/region.** Fit a logistic regression of purchase per impression with features
+  [position (one-hot), log(price), log(price) x device, log(price) x region, same subcategory as the last viewed, same
+  brand, |log price - mean log price of the session|], weighted by 1/propensity. The coefficients are interpretable
+  and easy to explain to the jury.
+- **Category affinity from views.** Compute the purchase rate conditioned on "the product shown shares
+  subcategory/brand/price range with k of the recent views".
+- **Live:** refit the regression every 30 minutes on your own feedback. Your data has no propensities if the policy is
+  deterministic; that's why your policy should have a small, *logged* randomisation (see F).
 
-### 4. Generalizar frente a memorizar (A3)
+### 4. Generalising vs memorising (A3)
 
-**Evidencia sólida:** DropoutNet (Volkovs, Yu y Poutanen, NeurIPS 2017)\[9\] muestra que un modelo entrenado «apagando» aleatoriamente las entradas de preferencia (las basadas en ID) aprende a apoyarse en el contenido. Sin bajar la precisión con usuarios y productos conocidos («warm start»), mejora en «cold start» (arranque en frío: usuarios o productos sin historial).\[10\] El principio para vosotros: **todo lo que entre al ranker debe poder calcularse para un producto nuevo**. Valen subcategoría, marca, cubo de precio, similitud de embedding con las vistas y antigüedad. No vale el ID del producto como feature categórica.
+**Solid evidence:** DropoutNet (Volkovs, Yu and Poutanen, NeurIPS 2017)\[9\] shows that a model trained by randomly
+"switching off" the preference inputs (the ID-based ones) learns to rely on content. Without losing accuracy on known
+users and products ("warm start"), it improves on "cold start" (users or products with no history).\[10\] The principle
+for us: **everything that goes into the ranker must be computable for a new product**. Subcategory, brand, price
+bucket, embedding similarity with the views and age are fine. The product ID as a categorical feature isn't.
 
-**Intuición razonada:** en la final habrá productos y usuarios nuevos y tendencias distintas. Las transiciones a nivel de atributo (subcategoría→subcategoría, marca→marca, cubo de precio→cubo de precio) se estiman con muchos más datos por celda que las de producto→producto (90×90 frente a 5.000×5.000) y se aplican tal cual a productos nuevos. Usad ambas: co‑visitas por ID cuando hay soporte y fallback a transiciones de atributos.
+**Reasoned intuition:** the final will have new products and users and different trends. Attribute-level transitions
+(subcategory->subcategory, brand->brand, price bucket->price bucket) are estimated with far more data per cell than
+product->product ones (90x90 vs 5,000x5,000) and apply as-is to new products. Use both: ID co-visits when there's
+support and a fallback to attribute transitions.
 
-### 5. Candidatos basados en sesión (B4–B5)
+### 5. Session-based candidates (B4-B5)
 
-- **Evidencia: los métodos simples compiten.** Ludewig, Mauro, Latifi y Jannach (UMUAI, 2020/arXiv:1910.12781) compararon doce algoritmos, seis de ellos neuronales, en ocho datasets, y concluyen que «in most cases… simple heuristic methods based on nearest-neighbors schemes are preferable». En los datasets de e‑commerce RETAIL, DIGI y ZALANDO ganan los métodos por vecinos (SKNN, V‑SKNN, STAN); solo en RSC15 un modelo neuronal (NARM) supera ligeramente a VSTAN (MAP@20 de 0,0357 frente a 0,0350), y SR‑GNN tarda unas 10.000 veces más en entrenar que VSTAN. STAN (Garg et al., SIGIR 2019) añade tres pesos a SKNN: la posición del ítem en la sesión actual, la recencia de las sesiones vecinas y la posición en la sesión vecina. La librería `session-rec` (GitHub rn5l/session-rec) tiene implementaciones en Python de sknn, vsknn, stan y vstan.
-- **Evidencia: OTTO (Kaggle, 2022–23).** El cuaderno público de Chris Deotte («Candidate ReRank Model», LB 0,575) usa tres matrices de co‑visita: (1) «Carts‑Orders» ponderada por tipo con pesos clic:carrito:pedido = 1:6:3 y ventana de 24 h; (2) «Buy2Buy» (carrito/pedido → carrito/pedido, ventana de 14 días, peso 1); (3) «Clicks» ponderada por tiempo con peso lineal de 1 a 4 según la fecha y ventana de 24 h.\[11\]\[12\] Trunca cada sesión a sus 30 eventos más recientes.\[11\] Para reordenar, pondera cada evento de la sesión con `np.logspace(0.1, 1, n, base=2) - 1` (más peso a lo reciente) multiplicado por el peso del tipo.\[11\] Los ganadores convirtieron esto en dos etapas: el 1.º (mrkmakr) generó 1.200 candidatos por sesión (re‑visitas, co‑visitas ponderadas por tipo y tiempo y recuperación neuronal) y los reordenó con LightGBM Ranker; según el resumen del blog de lukan217 (febrero de 2023), que cita la discusión n.º 384022 de Kaggle, obtuvo 0,604 con un solo modelo y 0,605 con un ensemble de 9 LightGBM con hiperparámetros distintos. El 3.º, el equipo de Chris Deotte, Giba y Theo, obtuvo 0,60437 en el público y 0,60382 en el privado (repositorio de Benedikt Schifferer, bschifferer/Kaggle-Otto-Comp). Una solución de plata usó ventanas de 12 h (clic→clic) y 24 h (clic→carrito/compra, carrito→carrito) y añadió **todos los ítems ya vistos en la sesión** como candidatos.\[13\]\[14\] Importante: en OTTO la métrica pondera 0,1 clics, 0,3 carritos y 0,6 pedidos, así que las matrices orientadas a compra eran las decisivas, igual que aquí.\[15\]\[16\]
-- **Recomendación para combinar señales (B5):** puntuación de candidato c dada la sesión s =
-  Σ_{v ∈ vistas de s} w_rec(v) · [α·CV_vista→vista(v,c) + β·CV_vista→compra(v,c) + γ·CV_carrito→compra(v,c)],
-  con w_rec(v) = 2^(−(n−pos(v))/h) (decaimiento exponencial; empezad con h ≈ 3 vistas) o el logspace de Deotte. Normalizad cada matriz por fila (dividiendo por la popularidad de c elevada a ~0,5) para no recomendar siempre lo popular. Empezad con α:β:γ = 1:6:3 por analogía con OTTO y ajustadlo con el evaluador offline. **Que vista→compra pese más que vista→vista es evidencia de OTTO; los valores exactos aquí son intuición que hay que validar.**
+- **Evidence: simple methods compete.** Ludewig, Mauro, Latifi and Jannach (UMUAI, 2020/arXiv:1910.12781) compared
+  twelve algorithms, six of them neural, on eight datasets, and conclude that "in most cases... simple heuristic
+  methods based on nearest-neighbors schemes are preferable". On the e-commerce datasets RETAIL, DIGI and ZALANDO the
+  neighbour methods win (SKNN, V-SKNN, STAN); only on RSC15 does a neural model (NARM) slightly beat VSTAN (MAP@20 of
+  0.0357 vs 0.0350), and SR-GNN takes about 10,000 times longer to train than VSTAN. STAN (Garg et al., SIGIR 2019) adds
+  three weights to SKNN: the item's position in the current session, the recency of neighbour sessions and the
+  position in the neighbour session. The `session-rec` library (GitHub rn5l/session-rec) has Python implementations of
+  sknn, vsknn, stan and vstan.
+- **Evidence: OTTO (Kaggle, 2022-23).** Chris Deotte's public notebook ("Candidate ReRank Model", LB 0.575) uses three
+  co-visitation matrices: (1) "Carts-Orders", weighted by type with click:cart:order weights of 1:6:3 and a 24 h
+  window; (2) "Buy2Buy" (cart/order -> cart/order, 14-day window, weight 1); (3) "Clicks", time-weighted with a linear
+  weight from 1 to 4 by date and a 24 h window.\[11\]\[12\] It truncates each session to its 30 most recent events.\[11\]
+  To rerank, it weights each session event with `np.logspace(0.1, 1, n, base=2) - 1` (more weight to recent ones)
+  times the type weight.\[11\] The winners turned this into two stages: the 1st (mrkmakr) generated 1,200 candidates
+  per session (revisits, type- and time-weighted co-visits and neural retrieval) and reranked them with LightGBM
+  Ranker; according to lukan217's blog summary (February 2023), citing Kaggle discussion #384022, it scored 0.604 with a
+  single model and 0.605 with an ensemble of 9 LightGBMs with different hyperparameters. The 3rd, the team of Chris
+  Deotte, Giba and Theo, scored 0.60437 public and 0.60382 private (Benedikt Schifferer's repo,
+  bschifferer/Kaggle-Otto-Comp). A silver solution used 12 h windows (click->click) and 24 h (click->cart/purchase,
+  cart->cart) and added **every item already viewed in the session** as a candidate.\[13\]\[14\] Important: OTTO's
+  metric weights 0.1 clicks, 0.3 carts and 0.6 orders, so the purchase-oriented matrices were the decisive ones, as
+  here.\[15\]\[16\]
+- **Recommendation for combining signals (B5):** score of candidate c given session s =
+  sum over views v of s of w_rec(v) * [alpha*CV_view->view(v,c) + beta*CV_view->purchase(v,c) + gamma*CV_cart->purchase(v,c)],
+  with w_rec(v) = 2^(-(n-pos(v))/h) (exponential decay; start with h ~ 3 views) or Deotte's logspace. Normalise each
+  matrix per row (dividing by c's popularity raised to ~0.5) so you don't always recommend the popular stuff. Start
+  with alpha:beta:gamma = 1:6:3 by analogy with OTTO and tune it with the offline evaluator. **That view->purchase
+  should weigh more than view->view is OTTO evidence; the exact values here are intuition to be validated.**
 
-### 6. Reordenar con un modelo (C6–C8)
+### 6. Reranking with a model (C6-C8)
 
-- **Arquitectura (evidencia de OTTO y RecSys 2015):** el ganador de RecSys Challenge 2015 (YOOCHOOSE; Romov y Sokolov, Yandex) usó clasificación en dos etapas, uso masivo de features categóricas, gradient boosting y umbrales optimizados directamente para la métrica.\[17\] En OTTO casi todos los oros usaron candidatos + GBDT ranker (LightGBM `lambdarank`, CatBoost `YetiRank`/`QueryCrossEntropy`).\[13\]\[18\]\[19\] Una solución de bronce describe que el ranker se apoya sobre todo en una puntuación de recencia con decaimiento exponencial de los ítems de la sesión.\[20\]
-- **Features que más importan, según los writeups de OTTO:** (1) ¿está el candidato en la sesión? y su recencia/tipo; (2) puntuaciones de co‑visita agregadas y su rango; (3) popularidad del candidato en varias ventanas temporales; (4) similitud de embedding con la última vista y con la media de la sesión.\[13\]\[19\]\[21\] Aquí hay que añadir (5) precio relativo al de la sesión, (6) coincidencia de subcategoría/marca/cubo de precio, (7) device/region/page y (8) producto nuevo (sí/no).
-- **Versión mínima viable (≈5–6 h):** entrenad sobre el **log de eventos** (12M), no sobre el carrusel. Cortad cada sesión en el instante t: el prefijo da las features y la etiqueta es «¿compra c en el resto de la sesión?». Tomad 50 candidatos por sesión, LightGBM binario (más fácil de calibrar que lambdarank) con 20–30 features y 1–2M filas. Inferencia: 50 candidatos × 30 features es trivial (<10 ms).
-- **Log sesgado (C7):** Joachims, Swaminathan y Schnabel (WSDM 2017) formalizan el ERM ponderado por propensity: cada clic observado se pondera por 1/P(examen en su posición). Así se obtiene un estimador insesgado del riesgo aunque los datos estén sesgados, y su Propensity SVM‑Rank superó tanto al ranker de producción como al SVM‑Rank ingenuo en un experimento real.\[22\]\[23\] **Para vosotros:** si entrenáis con el log del carrusel, ponderad las filas positivas por 1/E(r), con E(r) estimado en el punto 3, y recortad pesos (clipping a ≤10). Si entrenáis con el log de eventos orgánico, el sesgo es otro (lo que la tienda enseñaba): mitigadlo normalizando la popularidad.
-- **Objetivo (C8):** la nota es Σ_k E(k)·P(compra_k) y el desempate es el ingreso. Ordenad por **p̂(compra | ítem, contexto)** y aplicad el desempate solo cuando las probabilidades estén cerca: score = p̂ · (1 + λ·log(precio)) con λ pequeño (0,05–0,1), validado offline. Predecid P(compra) directamente si hay datos suficientes. Si no, descomponed P(clic) × P(compra | clic): los clics son mucho más frecuentes y dan menos ruido, sobre todo online. No optimicéis el ingreso esperado puro: subiría el ticket a costa de la conversión, que es lo que puntúa.
+- **Architecture (evidence from OTTO and RecSys 2015):** the RecSys Challenge 2015 winner (YOOCHOOSE; Romov and
+  Sokolov, Yandex) used two-stage classification, massive use of categorical features, gradient boosting and
+  thresholds optimised directly for the metric.\[17\] In OTTO almost every gold used candidates + a GBDT ranker
+  (LightGBM `lambdarank`, CatBoost `YetiRank`/`QueryCrossEntropy`).\[13\]\[18\]\[19\] A bronze solution describes the
+  ranker relying mostly on an exponentially decayed recency score of the session items.\[20\]
+- **Features that matter most, per the OTTO writeups:** (1) is the candidate in the session? and its recency/type; (2)
+  aggregated co-visit scores and their rank; (3) candidate popularity over several time windows; (4) embedding
+  similarity with the last view and with the session mean.\[13\]\[19\]\[21\] Here you'd add (5) price relative to the
+  session's, (6) subcategory/brand/price bucket match, (7) device/region/page and (8) new product (yes/no).
+- **Minimum viable version (~5-6 h):** train on the **event log** (12M), not the carousel. Cut each session at instant
+  t: the prefix gives the features and the label is "does c get bought in the rest of the session?". Take 50 candidates
+  per session, binary LightGBM (easier to calibrate than lambdarank) with 20-30 features and 1-2M rows. Inference: 50
+  candidates x 30 features is trivial (<10 ms).
+- **Biased log (C7):** Joachims, Swaminathan and Schnabel (WSDM 2017) formalise propensity-weighted ERM: each observed
+  click is weighted by 1/P(examination at its position). That gives an unbiased estimate of the risk even though the
+  data is biased, and their Propensity SVM-Rank beat both the production ranker and the naive SVM-Rank in a real
+  experiment.\[22\]\[23\] **For us:** if you train on the carousel log, weight positive rows by 1/E(r), with E(r)
+  estimated as in point 3, and clip weights (<= 10). If you train on the organic event log, the bias is different
+  (what the shop used to show): mitigate it by normalising popularity.
+- **Objective (C8):** the score is sum_k E(k)*P(purchase_k) and the tie-break is revenue. Sort by
+  **p_hat(purchase | item, context)** and apply the tie-break only when probabilities are close: score = p_hat *
+  (1 + lambda*log(price)) with a small lambda (0.05-0.1), validated offline. Predict P(purchase) directly if there's
+  enough data. If not, decompose into P(click) x P(purchase | click): clicks are much more frequent and less noisy,
+  especially online. Don't optimise pure expected revenue: it would raise the ticket at the cost of conversion, which
+  is what scores.
 
-### 7. Evaluación offline fiable (D9–D10)
+### 7. Reliable offline evaluation (D9-D10)
 
-- **Por qué el ejemplo oficial da pocas coincidencias:** el IPS de la lista completa o del slot 1 exige que vuestra lista coincida con la mostrada. Con 5.000 productos, eso casi nunca ocurre y la varianza explota. Swaminathan et al. (NeurIPS 2017) proponen el **estimador pseudoinverse (PI)** para listas, insesgado si la recompensa es aditiva por slot, y muestran que su versión ponderada domina al wIPS en todas sus condiciones experimentales.\[24\]\[25\] Vlassis et al. (2021) lo mejoran con variables de control.\[26\] Li et al. (KDD 2018, arXiv:1804.10488) construyen estimadores basados en **modelos de clic** (por ítem, por ítem‑posición, PBM, cascada) que son estadísticamente más eficientes, siempre que el modelo de clic se cumpla.\[27\]
-- **Recomendación concreta con ~100.000 impresiones:**
-  1. **Estimador principal, PBM‑IPS por ítem‑posición:** V̂(π) = (1/N) Σ_impresiones Σ_k E(k)·θ̂(π_k(x), x). Aquí θ̂(i,x) es el atractivo de compra estimado del ítem i en el contexto x, obtenido del log con pesos 1/propensity y suavizado bayesiano hacia la media de su subcategoría (prior Beta). Es un «direct method» guiado por el modelo de clic: sesgo pequeño si el PBM es razonable y varianza baja.
-  2. **Control, IPS/SNIPS por slot con recorte:** para cada slot k, pondera las compras cuando π coincide con el ítem mostrado en k, con peso 1/propensity(k) recortado. SNIPS (normalizado) reduce la varianza a cambio de un sesgo pequeño. Está implementado en Open Bandit Pipeline (`obp`, ZOZO), que incluye IPW, SNIPW, DR, DR con shrinkage, IIPS para listas y Cascade‑DR.\[28\]\[29\]
-  3. **Doubly robust** = (1) + corrección IPS de los residuos. Merece la pena si os sobra tiempo.
-  4. **Intervalos de confianza** con bootstrap por *sesión* (no por impresión): 200 remuestreos.
-- **Comprobar que la métrica offline predice la online (D10):** tenéis puntos de calibración gratuitos. Evaluad offline (a) más vendidos de siempre, (b) más vendidos de la categoría de lo último visto, y cada versión vuestra que hayáis desplegado en práctica. Si el estimador no ordena a (b) por encima de (a) y ~20 % arriba, no es fiable. Usad un **corte temporal** (entrenar días 1–50, evaluar días 51–60) y un **segmento frío** (sesiones de usuarios sin historial y productos creados en los últimos días) para simular la final. Reportad las dos cifras al jurado.
+- **Why the official example finds few matches:** whole-list or slot-1 IPS requires your list to match the one shown.
+  With 5,000 products that almost never happens and the variance explodes. Swaminathan et al. (NeurIPS 2017) propose
+  the **pseudoinverse (PI) estimator** for slates, unbiased if the reward is additive per slot, and show its weighted
+  version dominates wIPS in all their experimental conditions.\[24\]\[25\] Vlassis et al. (2021) improve it with control
+  variates.\[26\] Li et al. (KDD 2018, arXiv:1804.10488) build estimators based on **click models** (per item,
+  per item-position, PBM, cascade) that are statistically more efficient, as long as the click model holds.\[27\]
+- **Concrete recommendation with ~100,000 impressions:**
+  1. **Main estimator, item-position PBM-IPS:** V_hat(pi) = (1/N) sum over impressions sum_k E(k)*theta_hat(pi_k(x), x).
+     Here theta_hat(i,x) is the estimated purchase attractiveness of item i in context x, obtained from the log with
+     1/propensity weights and Bayesian smoothing towards its subcategory mean (Beta prior). It's a "direct method"
+     guided by the click model: small bias if PBM is reasonable, low variance.
+  2. **Check, clipped per-slot IPS/SNIPS:** for each slot k, weight the purchases when pi matches the item shown in k,
+     with a clipped 1/propensity(k) weight. SNIPS (normalised) reduces variance at the cost of a small bias. It's
+     implemented in Open Bandit Pipeline (`obp`, ZOZO), which includes IPW, SNIPW, DR, DR with shrinkage, IIPS for
+     slates and Cascade-DR.\[28\]\[29\]
+  3. **Doubly robust** = (1) + IPS correction of the residuals. Worth it if you have time left.
+  4. **Confidence intervals** with a bootstrap per *session* (not per impression): 200 resamples.
+- **Checking that the offline metric predicts the online one (D10):** you get free calibration points. Evaluate
+  offline (a) all-time best sellers, (b) best sellers of the last viewed category, and every version of yours deployed
+  during practice. If the estimator doesn't rank (b) above (a) and ~20 % higher, it isn't reliable. Use a **temporal
+  split** (train days 1-50, evaluate days 51-60) and a **cold segment** (sessions of users with no history and products
+  created in the last days) to simulate the final. Report both numbers to the jury.
 
-### 8. Cold start (E11–E12)
+### 8. Cold start (E11-E12)
 
-- **Productos nuevos:** los embeddings de qwen3 son baratos. Con 60 peticiones/min × 32 textos, embeber 5.000 descripciones lleva unos 2,6 minutos. Guardad el vector normalizado (o reducido a 256 dimensiones con PCA). Para un producto nuevo: (1) sus 20 vecinos por coseno *dentro de su subcategoría*; (2) **heredad sus co‑visitas** como media ponderada por similitud de las filas y columnas de co‑visita de esos vecinos; (3) prior de conversión = media de sus vecinos, encogida hacia la de su subcategoría. Así es como DropoutNet o CB2CF «colocan» un ítem frío en el espacio colaborativo, sin red neuronal. Añadid exploración optimista a los nuevos (ver F), porque su incertidumbre es mayor.
-- **Usuarios nuevos sin vistas:** popularidad *reciente* (EWMA de compras, no histórica) por (device, region, page), con suavizado jerárquico hacia la global. Cuando haya 1–2 vistas, la puntuación de sesión del punto 5 domina rápido.
-- **Regla de seguridad:** precalculad listas fallback por contexto (device×region×page = pocas combinaciones) y refrescadlas cada minuto.
+- **New products:** qwen3 embeddings are cheap. At 60 requests/min x 32 texts, embedding 5,000 descriptions takes about
+  2.6 minutes. Store the normalised vector (or reduced to 256 dimensions with PCA). For a new product: (1) its 20
+  nearest neighbours by cosine *within its subcategory*; (2) **inherit their co-visits** as a similarity-weighted average
+  of those neighbours' co-visit rows and columns; (3) conversion prior = mean of its neighbours, shrunk towards its
+  subcategory's. That's how DropoutNet or CB2CF "place" a cold item in the collaborative space, without a neural network.
+  Add optimistic exploration for new products (see F), since their uncertainty is higher.
+- **New users with no views:** *recent* popularity (EWMA of purchases, not historical) per (device, region, page), with
+  hierarchical smoothing towards the global one. Once there are 1-2 views, the session score of point 5 quickly takes
+  over.
+- **Safety rule:** precompute fallback lists per context (device x region x page = few combinations) and refresh them
+  every minute.
 
-### 9. Aprender del stream (F13–F15)
+### 9. Learning from the stream (F13-F15)
 
-- **Volumen real de señal:** 3 peticiones/s × 7.200 s = 21.600 peticiones en la final. Al 2 % son unas 430 compras, repartidas entre ~5.000 productos: menos de 0,1 compras por producto. **Un bandit producto a producto no puede aprender en la final.** Lo que sí se aprende: parámetros compartidos (multiplicadores de tendencia por subcategoría, peso del precio, efecto de rotura de stock) y, sobre todo, **clics**. Durante la práctica (≈237.600 peticiones en 22 h) sí podéis afinar.
-- **Qué usar:**
-  - **Tendencias:** EWMA de vistas/carritos/compras por producto y por subcategoría a partir de *todo* el stream de vuestro feedback y del log, con semivida de 15–30 minutos. Lift = EWMA_corto / (EWMA_largo + prior). Multiplicad la puntuación por lift^η con η≈0,3–0,5 y recortad.
-  - **Thompson sampling descontado** (Raj y Kalyani, 2017) sobre pocos «brazos»: variantes de λ (precio), η (tendencia) o mezclas de candidatos. El descuento γ olvida lo antiguo y mantiene viva la exploración ante cambios.\[30\]\[31\] Es explicable en una diapositiva (Beta(α,β) que se encoge con γ≈0,999 por petición).
-  - **Cascading bandits** (Kveton et al., 2015) es la base teórica para aprender el orden de listas con clics. Sus algoritmos funcionan sorprendentemente bien incluso cuando el modelo de usuario no es exactamente cascada,\[32\] pero aprender 5.000 atractivos con 430 compras sigue sin ser viable. Usadlo como argumento ante el jurado, no como implementación principal.
-- **Exploración:** 1–2 slots de los últimos (8–10) con candidatos «inciertos» (productos nuevos, tendencias emergentes), elegidos por muestreo de Thompson de su posterior. Bajo PBM, el coste es E(9)·Δθ, pequeño. Registrad la probabilidad con que se eligió cada ítem explorado: así podréis hacer IPS con vuestro propio log y explicarlo al jurado.
-- **Mérito entre posiciones (F14):** actualizad θ del ítem con «exámenes efectivos». Una impresión en la posición k cuenta como E(k) observaciones y una compra como 1. Es el estimador insesgado bajo PBM. Usad clics como señal densa con un prior de P(compra | clic) por subcategoría.
-- **Precio y stock (F15):** filtrad siempre en el momento de servir con la tabla de stock más reciente. Al cambiar un precio, recalculad las features de precio relativo, no el modelo. Si un producto se agota, sus co‑visitas pasan a sus vecinos de embedding de la misma subcategoría.
+- **Actual signal volume:** 3 requests/s x 7,200 s = 21,600 requests in the final. At 2 % that's about 430 purchases,
+  spread over ~5,000 products: fewer than 0.1 purchases per product. **A per-product bandit can't learn in the final.**
+  What can be learned: shared parameters (trend multipliers per subcategory, price weight, stock-out effect) and, above
+  all, **clicks**. During practice (~237,600 requests in 22 h) you can tune.
+- **What to use:**
+  - **Trends:** EWMA of views/carts/purchases per product and per subcategory from *the whole* stream of your feedback
+    and the log, with a 15-30 minute half-life. Lift = EWMA_short / (EWMA_long + prior). Multiply the score by
+    lift^eta with eta ~ 0.3-0.5 and clip.
+  - **Discounted Thompson sampling** (Raj and Kalyani, 2017) over a few "arms": variants of lambda (price), eta (trend)
+    or candidate mixes. The discount gamma forgets old data and keeps exploration alive under change.\[30\]\[31\] It fits
+    on one slide (Beta(alpha,beta) shrinking with gamma ~ 0.999 per request).
+  - **Cascading bandits** (Kveton et al., 2015) is the theoretical basis for learning list order from clicks. Their
+    algorithms work surprisingly well even when the user model isn't exactly cascade,\[32\] but learning 5,000
+    attractiveness values with 430 purchases is still not viable. Use it as an argument for the jury, not as the main
+    implementation.
+- **Exploration:** 1-2 of the last slots (8-10) with "uncertain" candidates (new products, emerging trends), picked by
+  Thompson sampling from their posterior. Under PBM the cost is E(9)*delta_theta, small. Log the probability each
+  explored item was picked with: that way you can do IPS on your own log and explain it to the jury.
+- **Merit across positions (F14):** update an item's theta with "effective examinations". An impression at position
+  k counts as E(k) observations and a purchase as 1. That's the unbiased estimator under PBM. Use clicks as a dense
+  signal with a prior of P(purchase | click) per subcategory.
+- **Price and stock (F15):** always filter at serving time with the latest stock table. When a price changes,
+  recompute the relative price features, not the model. If a product goes out of stock, its co-visits pass to its
+  embedding neighbours in the same subcategory.
 
-### 10. Ingeniería en tiempo real (G16–G17)
+### 10. Real-time engineering (G16-G17)
 
-- **Patrón:** el camino caliente (la respuesta a cada petición) **no consulta la base de datos de forma síncrona**. Un hilo en segundo plano refresca cada 30–60 s, desde RawTree/ClickHouse, diccionarios en memoria: stock/activos, precios, EWMA de tendencias, top‑N de co‑visitas por producto y fallbacks por contexto. Cada petición hace búsquedas en diccionarios, puntúa ≤200 candidatos, deduplica con un `set`, filtra activos y en stock y rellena hasta 10 con el fallback. Con un timeout interno de 1 s, devolved el fallback precalculado, que siempre es válido. Medid p99 de latencia y el porcentaje a tiempo (objetivo: 100 %; el equipo de GBM con 61 % muestra el coste de no hacerlo).
-- **SQL que suma con el jurado (agregados incrementales en ClickHouse):** tablas `AggregatingMergeTree` alimentadas por vistas materializadas con `countState`/`sumState` por (producto, ventana de 5 min). Las vistas materializadas de ClickHouse son disparadores de INSERT que mantienen agregados en tiempo real sin trabajos programados.\[33\] `argMax(price, ts)` da el precio vigente y `argMax(in_stock, ts)` el stock vigente.\[34\]\[35\] Las co‑visitas se construyen con `groupArray` + `arrayJoin` por sesión, en una consulta. Para el top‑N por fila, `ORDER BY ... LIMIT N BY item`. Para ventanas, `windowFunnel` o filtros `ts > now() - INTERVAL 30 MINUTE`. Comprobad qué funciones soporta RawTree, porque es una derivada y no ClickHouse literal.
+- **Pattern:** the hot path (the answer to each request) **never queries the database synchronously**. A background
+  thread refreshes in-memory dictionaries from RawTree/ClickHouse every 30-60 s: stock/active, prices, trend EWMAs, top-N
+  co-visits per product and context fallbacks. Each request does dictionary lookups, scores <= 200 candidates,
+  deduplicates with a `set`, filters active and in-stock and fills up to 10 with the fallback. With an internal 1 s
+  timeout, return the precomputed fallback, which is always valid. Measure p99 latency and the on-time % (target:
+  100 %; the GBM team at 61 % shows the cost of not doing so).
+- **SQL that scores with the jury (incremental aggregates in ClickHouse):** `AggregatingMergeTree` tables fed by
+  materialized views with `countState`/`sumState` per (product, 5-min window). ClickHouse materialized views are INSERT
+  triggers that keep real-time aggregates with no scheduled jobs.\[33\] `argMax(price, ts)` gives the current price and
+  `argMax(in_stock, ts)` the current stock.\[34\]\[35\] Co-visits are built with `groupArray` + `arrayJoin` per session,
+  in one query. For the top-N per row, `ORDER BY ... LIMIT N BY item`. For windows, `windowFunnel` or
+  `ts > now() - INTERVAL 30 MINUTE` filters. Check which functions RawTree supports, since it's a derivative and not
+  literal ClickHouse.
 
-### 11. Antecedentes (H18)
+### 11. Prior art (H18)
 
-- **CLEF NewsREEL (2014–2017):** recomendación de noticias en vivo con tiempo límite. El informe de 2014 (Kille et al., «Overview of CLEF NEWSREEL 2014») constata que «most systems carried a fall-back solution in terms of most-popular and/or most-recent strategies» y que «the baseline is hard to beat», aunque lo atribuye en parte a las restricciones técnicas (13 participantes activos y un límite de respuesta de 100 ms). Las respuestas tardías o inválidas contaban como peticiones sin clic, igual que aquí.\[36\] En 2015, los mejores CTR por periodo fueron del 0,79 % (irit‑imt, 44 clics en 5.597 peticiones) y del 0,86 % (abc, 56 clics en 6.483 peticiones), según el Overview de NewsREEL 2015.
-- **RecSys 2015 (YOOCHOOSE):** ganó gradient boosting en dos etapas con features categóricas masivas (Romov y Sokolov). Según Ben‑Shimon et al. («RecSys Challenge 2015 and the YOOCHOOSE Dataset», RecSys '15), compitieron 850 equipos de 49 países con 5.437 soluciones, y el ganador obtuvo 63.102 puntos, «approximately 50% of the maximum score».
-- **OTTO 2023:** co‑visitas, candidatos y GBDT ranker. El 1.º usó 1.200 candidatos y una recuperación neuronal, pero la columna vertebral era la misma que la de los equipos de plata.\[37\]
-- **Diginetica (CIKM Cup 2016) y Retail Rocket:** son benchmarks habituales en los estudios de Ludewig/Jannach donde SKNN/STAN compiten con GRU4Rec/SR‑GNN. No he verificado los detalles de los ganadores de CIKM Cup para este informe.
+- **CLEF NewsREEL (2014-2017):** live news recommendation with a time limit. The 2014 report (Kille et al., "Overview
+  of CLEF NEWSREEL 2014") notes that "most systems carried a fall-back solution in terms of most-popular and/or
+  most-recent strategies" and that "the baseline is hard to beat", partly attributing it to the technical constraints
+  (13 active participants and a 100 ms response limit). Late or invalid answers counted as requests without a click,
+  as here.\[36\] In 2015 the best CTRs per period were 0.79 % (irit-imt, 44 clicks in 5,597 requests) and 0.86 % (abc,
+  56 clicks in 6,483 requests), according to the NewsREEL 2015 Overview.
+- **RecSys 2015 (YOOCHOOSE):** two-stage gradient boosting with massive categorical features won (Romov and Sokolov).
+  According to Ben-Shimon et al. ("RecSys Challenge 2015 and the YOOCHOOSE Dataset", RecSys '15), 850 teams from 49
+  countries competed with 5,437 solutions, and the winner scored 63,102 points, "approximately 50% of the maximum
+  score".
+- **OTTO 2023:** co-visits, candidates and a GBDT ranker. The 1st used 1,200 candidates and neural retrieval, but the
+  backbone was the same as the silver teams'.\[37\]
+- **Diginetica (CIKM Cup 2016) and Retail Rocket:** common benchmarks in the Ludewig/Jannach studies, where SKNN/STAN
+  compete with GRU4Rec/SR-GNN. The CIKM Cup winners' details weren't verified for this report.
 
-### 12. Errores típicos (H19)
+### 12. Typical mistakes (H19)
 
-1. **Fuga temporal:** construir co‑visitas o popularidad con datos posteriores al punto de corte de validación.
-2. **Memorizar el log:** IDs de producto como feature y popularidad histórica como feature dominante. Lo que se aprende así es la política antigua, no al usuario.
-3. **Sobreajustar a la práctica:** en la final cambian los productos, los precios y las tendencias. Todo parámetro ajustado en vivo debe tener un prior y un descuento temporal.
-4. **Recomendar lo ya comprado:** filtradlo siempre (la pista lo dice).
-5. **Latencia y validez:** duplicados, productos inactivos o sin stock, menos de 10 ítems. Validad cada respuesta antes de enviarla.
-6. **Evaluar con IPS de lista completa** y concluir «no podemos medir»: usad estimadores por posición.
+1. **Temporal leakage:** building co-visits or popularity with data after the validation cutoff.
+2. **Memorising the log:** product IDs as a feature and historical popularity as the dominant feature. What you learn
+   that way is the old policy, not the user.
+3. **Overfitting to practice:** products, prices and trends change in the final. Every parameter tuned live needs a
+   prior and a time discount.
+4. **Recommending what was already bought:** always filter it (the hint says so).
+5. **Latency and validity:** duplicates, inactive or out-of-stock products, fewer than 10 items. Validate every answer
+   before sending it.
+6. **Evaluating with whole-list IPS** and concluding "we can't measure": use position-based estimators.
 
-## Tabla priorizada de técnicas (ganancia esperada ÷ esfuerzo)
+## Prioritised table of techniques (expected gain / effort)
 
-| # | Técnica | Ganancia esperada aquí | Horas | Riesgo | Base |
+| # | Technique | Expected gain here | Hours | Risk | Basis |
 |---|---|---|---|---|---|
-| 1 | Servicio robusto: caché en memoria, fallback por contexto, validación, timeout | Evita perder hasta el 100 % de una petición | 2–3 | Bajo | NewsREEL; el equipo con 61 % a tiempo |
-| 2 | Excluir comprados + filtros de stock/activo | Pequeña pero segura | 0,5 | Muy bajo | Pista oficial |
-| 3 | Candidatos de sesión: re‑visitas + misma subcategoría/marca + co‑visitas ponderadas por tipo y recencia | **Muy alta** (pasar de +20 % a ×2) | 4–5 | Bajo | OTTO, Ludewig/Jannach, STAN |
-| 4 | Curva de posición E(k) del log (harvesting/EM) | Alta (habilita 5, 6 y 9) | 2 | Bajo | Wang 2018; Agarwal 2019 |
-| 5 | Evaluador offline PBM‑IPS + SNIPS + bootstrap + calibración con el leaderboard | Alta (decide todo lo demás; 30 % del jurado) | 3–4 | Medio | Li 2018; Swaminathan 2017; obp |
-| 6 | Puntuación explícita: afinidad × precio (regresión logística ponderada) | Alta | 2–3 | Medio | Joachims 2017 (IPS); inferencia propia |
-| 7 | Cold start de productos con embeddings y herencia de co‑visitas | Media‑alta en la final | 2–3 | Bajo | DropoutNet (principio) |
-| 8 | Popularidad reciente por contexto (EWMA) para usuarios nuevos | Media | 1–2 | Bajo | NewsREEL |
-| 9 | Tendencias EWMA + lift | Media | 1–2 | Bajo‑medio | Intuición + NewsREEL |
-| 10 | Ranker LightGBM con features por atributos | Media‑alta si 3–6 funcionan | 5–6 | **Medio‑alto** (los equipos de GBM fallaron) | OTTO, RecSys 2015 |
-| 11 | Thompson descontado sobre pocos hiperparámetros + exploración en slots 8–10 | Media; alta para el jurado | 2–3 | Medio | Raj y Kalyani 2017; Kveton 2015 |
-| 12 | Desempate por ingreso (λ·log precio) | Pequeña (solo desempate) | 0,5 | Bajo | Métrica |
-| 13 | Doubly robust / PI completo | Pequeña sobre 5 | 2–3 | Medio | Swaminathan 2017; obp |
-| 14 | Modelos neuronales (GRU4Rec, SASRec, SR‑GNN) | Baja con este presupuesto | 8+ | Alto | Ludewig et al. 2020 |
-| 15 | Bandit por producto (LinUCB/cascading completo) | Baja en la final (≈430 compras) | 4+ | Alto | Cálculo propio |
+| 1 | Robust service: in-memory cache, context fallback, validation, timeout | Avoids losing up to 100 % of a request | 2-3 | Low | NewsREEL; the team at 61 % on time |
+| 2 | Exclude bought + stock/active filters | Small but safe | 0.5 | Very low | Official hint |
+| 3 | Session candidates: revisits + same subcategory/brand + type- and recency-weighted co-visits | **Very high** (from +20 % to 2x) | 4-5 | Low | OTTO, Ludewig/Jannach, STAN |
+| 4 | Position curve E(k) from the log (harvesting/EM) | High (enables 5, 6 and 9) | 2 | Low | Wang 2018; Agarwal 2019 |
+| 5 | Offline evaluator PBM-IPS + SNIPS + bootstrap + leaderboard calibration | High (decides everything else; 30 % of the jury) | 3-4 | Medium | Li 2018; Swaminathan 2017; obp |
+| 6 | Explicit score: affinity x price (weighted logistic regression) | High | 2-3 | Medium | Joachims 2017 (IPS); own inference |
+| 7 | Product cold start with embeddings and inherited co-visits | Medium-high in the final | 2-3 | Low | DropoutNet (principle) |
+| 8 | Recent popularity per context (EWMA) for new users | Medium | 1-2 | Low | NewsREEL |
+| 9 | EWMA trends + lift | Medium | 1-2 | Low-medium | Intuition + NewsREEL |
+| 10 | LightGBM ranker with attribute features | Medium-high if 3-6 work | 5-6 | **Medium-high** (the GBM teams failed) | OTTO, RecSys 2015 |
+| 11 | Discounted Thompson over a few hyperparameters + exploration in slots 8-10 | Medium; high for the jury | 2-3 | Medium | Raj and Kalyani 2017; Kveton 2015 |
+| 12 | Revenue tie-break (lambda*log price) | Small (tie-break only) | 0.5 | Low | Metric |
+| 13 | Doubly robust / full PI | Small on top of 5 | 2-3 | Medium | Swaminathan 2017; obp |
+| 14 | Neural models (GRU4Rec, SASRec, SR-GNN) | Low with this budget | 8+ | High | Ludewig et al. 2020 |
+| 15 | Per-product bandit (LinUCB/full cascading) | Low in the final (~430 purchases) | 4+ | High | Own calculation |
 
-## Fichas de las técnicas recomendadas
+## Technique cards
 
-**T3 – Candidatos de sesión con co‑visitas.** *Qué es:* contad cuántas veces dos productos aparecen juntos en la misma sesión, en un intervalo corto y dando más peso si el segundo evento fue una compra. Para recomendar, sumad las filas de los productos vistos, con más peso a los recientes. Es «la gente que miró esto compró aquello». *Por qué encaja:* catálogo pequeño, sesiones cortas y 12M eventos: tabla densa y fiable. *Referencias:* cuaderno de Deotte en Kaggle OTTO (pesos 1:6:3, ventanas de 24 h y 14 días); Ludewig et al. arXiv:1910.12781; STAN (Garg et al., SIGIR 2019). *Python:* `polars`/`pandas` o SQL en ClickHouse; `session-rec` si queréis probar V‑SKNN/STAN. *Validación:* Recall@10 de compras sobre el corte temporal y el estimador del punto 7. *Errores:* no normalizar por popularidad; ventanas demasiado largas; contar pares duplicados de la misma sesión.
+**T3 - Session candidates with co-visits.** *What it is:* count how often two products appear together in the same
+session, within a short interval, with more weight if the second event was a purchase. To recommend, add up the rows
+of the viewed products, with more weight on recent ones. It's "people who looked at this bought that". *Why it fits:*
+small catalog, short sessions and 12M events: a dense, reliable table. *References:* Deotte's notebook on Kaggle OTTO
+(1:6:3 weights, 24 h and 14-day windows); Ludewig et al. arXiv:1910.12781; STAN (Garg et al., SIGIR 2019). *Python:*
+`polars`/`pandas` or SQL in ClickHouse; `session-rec` to try V-SKNN/STAN. *Validation:* Recall@10 of purchases on the
+temporal split and the estimator of point 7. *Mistakes:* not normalising by popularity; windows too long; counting
+duplicate pairs from the same session.
 
-**T4 – Curva de posición.** *Qué es:* la probabilidad de que el usuario mire el slot k. Se estima comparando el mismo producto en distintos slots, corrigiendo con la propensity. *Por qué encaja:* tenéis propensities y azar en el log, el caso ideal. *Referencias:* Wang et al. WSDM 2018 (regression EM); Agarwal et al. WSDM 2019. *Python:* numpy (EM de 30 líneas) o `statsmodels` GLM. *Validación:* la curva debe ser monótona y estable entre mitades del log. *Errores:* confundir la caída por posición con la caída por calidad, que es justo lo que corrige la propensity.
+**T4 - Position curve.** *What it is:* the probability that the user looks at slot k. Estimated by comparing the same
+product in different slots, corrected with the propensity. *Why it fits:* you have propensities and randomness in the
+log, the ideal case. *References:* Wang et al. WSDM 2018 (regression EM); Agarwal et al. WSDM 2019. *Python:* numpy (a
+30-line EM) or `statsmodels` GLM. *Validation:* the curve should be monotonic and stable across halves of the log.
+*Mistakes:* confusing the drop by position with the drop by quality, which is exactly what the propensity corrects.
 
-**T5 – Evaluador offline.** *Qué es:* una función que, dada una política, estima sus compras por cada 100 peticiones con los datos antiguos. *Por qué encaja:* es la única forma de decidir sin gastar la práctica, y el jurado lo pide. *Referencias:* Li et al. KDD 2018 (arXiv:1804.10488); Swaminathan et al. NeurIPS 2017; Open Bandit Pipeline (arXiv:2008.07146). *Python:* numpy + `obp`. *Validación:* calibrad con el baseline (0,66 %) y la categoría (0,79 %). *Errores:* propensities sin recorte; bootstrap por impresión en lugar de por sesión.
+**T5 - Offline evaluator.** *What it is:* a function that, given a policy, estimates its purchases per 100 requests from
+the old data. *Why it fits:* it's the only way to decide without spending practice time, and the jury asks for it.
+*References:* Li et al. KDD 2018 (arXiv:1804.10488); Swaminathan et al. NeurIPS 2017; Open Bandit Pipeline
+(arXiv:2008.07146). *Python:* numpy + `obp`. *Validation:* calibrate with the baseline (0.66 %) and the category
+(0.79 %). *Mistakes:* unclipped propensities; bootstrap per impression instead of per session.
 
-**T6/T10 – Puntuación y ranker.** *Qué es:* un modelo que da a cada candidato la probabilidad de compra a partir de features interpretables. *Por qué encaja:* combina afinidad, precio y contexto, la estructura más probable del simulador. *Referencias:* Joachims et al. WSDM 2017; Romov y Sokolov, RecSys Challenge 2015; writeups de OTTO. *Python:* `scikit-learn` LogisticRegression primero y `lightgbm` después. *Validación:* AUC en el corte temporal + el estimador T5 + el segmento frío. *Errores:* features por ID; entrenar con popularidad futura; olvidar la latencia (cargad el modelo una vez y predecid en lote).
+**T6/T10 - Score and ranker.** *What it is:* a model that gives each candidate a purchase probability from
+interpretable features. *Why it fits:* it combines affinity, price and context, the most likely structure of the
+simulator. *References:* Joachims et al. WSDM 2017; Romov and Sokolov, RecSys Challenge 2015; OTTO writeups. *Python:*
+`scikit-learn` LogisticRegression first and `lightgbm` later. *Validation:* AUC on the temporal split + the T5 estimator
++ the cold segment. *Mistakes:* ID features; training with future popularity; forgetting latency (load the model once
+and predict in batches).
 
-**T7 – Cold start con embeddings.** Ver punto 8. *Errores:* superar el límite compartido de 60 rpm (encolad y cachead); comparar embeddings sin normalizar.
+**T7 - Cold start with embeddings.** See point 8. *Mistakes:* exceeding the shared 60 rpm limit (queue and cache);
+comparing unnormalised embeddings.
 
-**T11 – Thompson descontado.** *Qué es:* cada variante tiene una distribución Beta de su tasa de éxito; en cada petición se muestrea y se usa la variante ganadora; lo antiguo se olvida poco a poco. *Por qué encaja:* aprende online con pocos brazos y se adapta a cambios. *Referencias:* Raj y Kalyani, arXiv:1707.09727; Kveton et al. ICML 2015. *Validación:* simulad offline con el log que la regla converge. *Errores:* demasiados brazos para la señal disponible; recompensar con compras cuando los clics darían 10× más señal.
+**T11 - Discounted Thompson.** *What it is:* each variant has a Beta distribution of its success rate; on each request
+you sample and use the winning variant; old data is slowly forgotten. *Why it fits:* it learns online with few arms and
+adapts to change. *References:* Raj and Kalyani, arXiv:1707.09727; Kveton et al. ICML 2015. *Validation:* simulate
+offline on the log that the rule converges. *Mistakes:* too many arms for the available signal; rewarding with
+purchases when clicks would give 10x more signal.
 
-## Plan por horas (4 personas, ~20 h)
+## Hourly plan (4 people, ~20 h)
 
-| Horas | P1 – Infra/servicio | P2 – Candidatos | P3 – Evaluación offline | P4 – Online/jurado |
+| Hours | P1 - Infra/service | P2 - Candidates | P3 - Offline evaluation | P4 - Online/jury |
 |---|---|---|---|---|
-| 0–3 | Servicio con caché, fallback por contexto, validador y métricas de latencia; desplegar baseline+exclusión de comprados | Co‑visitas en SQL (vista→vista, vista→compra, carrito→compra) con ventanas y pesos | Cargar el log del carrusel; estimar E(k) | Tablas incrementales en ClickHouse (EWMA, stock, precio vigente); plantilla de la presentación |
-| 3–6 | Integrar la política de P2 (v1) y desplegarla | Política v1: re‑visitas + co‑visitas + subcategoría; normalización | Evaluador PBM‑IPS + SNIPS + bootstrap; calibración con baseline/categoría | Prueba A/B de hipótesis del modelo oculto (subcategoría, precio, re‑visita) |
-| 6–10 | Embeddings de descripciones (cola con límite de rpm); vecinos y herencia de co‑visitas | Regresión logística ponderada (afinidad × precio × contexto) | Evaluar v1, v2 y variantes; corte temporal y segmento frío | Tendencias EWMA y lift; Thompson descontado sobre λ y η |
-| 10–16 | Endurecer el servicio: p99, pruebas de carga a 10 req/s, simulacros de caída de la base de datos | LightGBM con features por atributos; comparar con la regresión logística | Decidir con datos si el ranker mejora (IC sin solapamiento) | Exploración en slots 8–10 con propensities registradas; panel de feedback |
-| 16–19 | Congelar el código; modo seguro por defecto | Ajuste fino de pesos con el evaluador | Informe de validación para el jurado | Ensayar la explicación; checklist de la final |
-| 19–20 | Despliegue final y monitorización | Reserva | Reserva | Reserva |
+| 0-3 | Service with cache, context fallback, validator and latency metrics; deploy baseline + bought exclusion | Co-visits in SQL (view->view, view->purchase, cart->purchase) with windows and weights | Load the carousel log; estimate E(k) | Incremental tables in ClickHouse (EWMA, stock, current price); presentation template |
+| 3-6 | Plug in P2's policy (v1) and deploy it | Policy v1: revisits + co-visits + subcategory; normalisation | PBM-IPS + SNIPS + bootstrap evaluator; calibration with baseline/category | A/B test of hidden-model hypotheses (subcategory, price, revisit) |
+| 6-10 | Description embeddings (queue under the rpm limit); neighbours and inherited co-visits | Weighted logistic regression (affinity x price x context) | Evaluate v1, v2 and variants; temporal split and cold segment | EWMA trends and lift; discounted Thompson over lambda and eta |
+| 10-16 | Harden the service: p99, load tests at 10 req/s, database outage drills | LightGBM with attribute features; compare with the logistic regression | Decide with data whether the ranker improves (non-overlapping CIs) | Exploration in slots 8-10 with logged propensities; feedback panel |
+| 16-19 | Code freeze; safe mode by default | Fine-tune weights with the evaluator | Validation report for the jury | Rehearse the explanation; final checklist |
+| 19-20 | Final deployment and monitoring | Reserve | Reserve | Reserve |
 
-**Regla de decisión:** cada cambio pasa por el evaluador offline y luego por 30–60 minutos en vivo. Si el intervalo de confianza online no mejora, se revierte. El ranker grande **reutiliza** todo lo anterior: los candidatos (T3), la curva de posición (T4), las features de la regresión (T6), los embeddings (T7) y el evaluador (T5). Por eso empezar simple no es tiempo perdido: es la etapa 1 del modelo grande.
+**Decision rule:** every change goes through the offline evaluator and then 30-60 minutes live. If the online
+confidence interval doesn't improve, it's rolled back. The big ranker **reuses** everything before it: the candidates
+(T3), the position curve (T4), the regression features (T6), the embeddings (T7) and the evaluator (T5). That's why
+starting simple isn't wasted time: it's stage 1 of the big model.
 
 ## Caveats
 
-- **Evidencia sólida:** que los métodos por vecinos compiten en sesiones (Ludewig/Jannach); el patrón co‑visitas + GBDT de OTTO y RecSys 2015; IPS para aprender con sesgo de posición (Joachims 2017); regression EM (Wang 2018); los estimadores con modelo de clic y el PI (Li 2018, Swaminathan 2017); los modelos de usuario de RecSim, SARDINE y RecoGym; NewsREEL (lo popular y reciente es difícil de batir).
-- **Intuición o inferencia propia:** la lectura de los números del leaderboard (precio poco penalizado, afinidad fina); los pesos concretos (α:β:γ, h, λ, η, semividas); el cálculo de que en la final hay pocas compras para aprender por producto; el plan por horas.
-- **Datos de segunda mano:** los detalles del cuaderno de Deotte y la puntuación del 1.º de OTTO proceden de copias en blogs de terceros; el top‑N exacto por matriz no está verificado. No he verificado a los ganadores de Diginetica/CIKM Cup ni de Retail Rocket.
-- **RawTree no es ClickHouse literal:** confirmad la sintaxis (`AggregatingMergeTree`, `argMax`, `LIMIT BY`) antes de diseñar en torno a ella.
-- **El simulador puede no seguir ninguno de los modelos de la literatura.** Por eso la calibración del evaluador con los puntos reales del leaderboard y las pruebas A/B tempranas son lo más valioso de todo el plan.
+- **Solid evidence:** that neighbour methods compete on sessions (Ludewig/Jannach); the co-visits + GBDT pattern of
+  OTTO and RecSys 2015; IPS for learning under position bias (Joachims 2017); regression EM (Wang 2018); click-model and
+  PI estimators (Li 2018, Swaminathan 2017); the user models of RecSim, SARDINE and RecoGym; NewsREEL (popular and recent
+  is hard to beat).
+- **Own intuition or inference:** the reading of the leaderboard numbers (price barely penalised, fine affinity); the
+  concrete weights (alpha:beta:gamma, h, lambda, eta, half-lives); the estimate that the final has too few purchases to
+  learn per product; the hourly plan.
+- **Second-hand data:** the details of Deotte's notebook and OTTO's 1st place score come from copies on third-party
+  blogs; the exact top-N per matrix isn't verified. The Diginetica/CIKM Cup and Retail Rocket winners weren't verified.
+- **RawTree isn't literal ClickHouse:** confirm the syntax (`AggregatingMergeTree`, `argMax`, `LIMIT BY`) before
+  designing around it.
+- **The simulator may not follow any of the models in the literature.** That's why calibrating the evaluator with the
+  real leaderboard points and early A/B tests are the most valuable part of the whole plan.
 
-## Fuentes
+## Sources
 
 1. [SARDINE: Simulator for Automated Recommendation in Dynamic and Interactive Environments](https://doi.org/10.1145/3656481)
 2. [Cascading Bandits: Learning to Rank in the Cascade Model](https://proceedings.mlr.press/v37/kveton15.html)
@@ -181,30 +385,30 @@ Interpretación. Es **inferencia**, no evidencia directa del simulador:
 8. [Position Bias Estimation for Unbiased Learning to Rank in Personal Search · Issue #2 · usaito/CFML-papers · GitHub](https://github.com/usaito/CFML-papers/issues/2)
 9. [Multi-modal Adaptive Mixture of Experts for Cold-start Recommendation](https://arxiv.org/pdf/2508.08042)
 10. [DropoutNet: Addressing Cold Start in Recommender Systems - rotten-fruits](https://scrapbox.io/rotten-fruits/DropoutNet:_Addressing_Cold_Start_in_Recommender_Systems)
-11. [实习-Kaggle-OTTO比赛回顾](https://gladdduck.github.io/2024/03/14/%E5%AE%9E%E4%B9%A0-Kaggle-OTTO%E6%AF%94%E8%B5%9B%E5%9B%9E%E9%A1%BE/index.html)
-12. [📔OTTO: easy-to-use co-visitation matrix function](https://www.kaggle.com/code/mizuny/otto-easy-to-use-co-visitation-matrix-function)
+11. [Kaggle OTTO competition review (in Chinese)](https://gladdduck.github.io/2024/03/14/%E5%AE%9E%E4%B9%A0-Kaggle-OTTO%E6%AF%94%E8%B5%9B%E5%9B%9E%E9%A1%BE/index.html)
+12. [OTTO: easy-to-use co-visitation matrix function](https://www.kaggle.com/code/mizuny/otto-easy-to-use-co-visitation-matrix-function)
 13. [OTTO](https://www.kaggle.com/c/otto-recommender-system/discussion/383130)
 14. [GitHub - nicolaivicol/otto-recommender: Solution to kaggle competition OTTO](https://github.com/nicolaivicol/otto-recommender)
-15. [GitHub - wenlinxiao/otto-recsys: 🛍 A real-world e-commerce dataset for session-based recommender systems research.](https://github.com/wenlinxiao/otto-recsys)
+15. [GitHub - wenlinxiao/otto-recsys: A real-world e-commerce dataset for session-based recommender systems research.](https://github.com/wenlinxiao/otto-recsys)
 16. [OTTO](https://www.kaggle.com/competitions/otto-recommender-system)
 17. [RecSys Challenge 2015: ensemble learning with categorical features](https://publications.hse.ru/en/chapters/175896819)
 18. [Building a Recommender System using Machine Learning](https://www.leoniemonigatti.com/blog/recommender-system-ml.html)
 19. [ex-27th place solution](https://www.kaggle.com/competitions/otto-recommender-system/writeups/dreamteam-ex-27th-place-solution)
-20. [Bronze Medal Solution on Kaggle OTTO — Multi-Objective Recommender System](https://ajisamudra.medium.com/bronze-medal-solution-on-kaggle-otto-multi-objective-recommender-system-d0720aed4712)
+20. [Bronze Medal Solution on Kaggle OTTO: Multi-Objective Recommender System](https://ajisamudra.medium.com/bronze-medal-solution-on-kaggle-otto-multi-objective-recommender-system-d0720aed4712)
 21. [6th place solution (single model LB 0.603)](https://www.kaggle.com/c/otto-recommender-system/discussion/384120)
 22. [Unbiased Learning-to-Rank with Biased Feedback](https://www.alphaxiv.org/abs/1608.04468)
 23. [Google Scholar](https://scholar.google.com/scholar_lookup?title=Unbiased+learning-to-rank+with+biased+feedback&amp=&author=T.+Joachims&amp=&author=A.+Swaminathan&amp=&author=T.+Schnabel&amp=&publication_year=2017&amp=&pages=781-789&amp=&doi=10.1145%2F3018661.3018699)
-24. [Off-policy evaluation for slate recommendation Adith Swaminathan](http://papers.neurips.cc/paper/6954-off-policy-evaluation-for-slate-recommendation.pdf)
+24. [Off-policy evaluation for slate recommendation, Adith Swaminathan](http://papers.neurips.cc/paper/6954-off-policy-evaluation-for-slate-recommendation.pdf)
 25. [Reviews: Off-policy evaluation for slate recommendation](https://proceedings.neurips.cc/paper/2017/file/5352696a9ca3397beb79f116f3a33991-Reviews.html)
 26. [Control Variates for Slate Off-Policy Evaluation](https://arxiv.org/pdf/2106.07914)
 27. [Offline Evaluation of Ranking Policies with Click Models](https://arxiv.org/abs/1804.10488)
-28. [GitHub - st-tech/zr-obp: Open Bandit Pipeline: a python library for bandit algorithms and off-policy evaluation · GitHub](https://github.com/st-tech/zr-obp)
+28. [GitHub - st-tech/zr-obp: Open Bandit Pipeline: a python library for bandit algorithms and off-policy evaluation](https://github.com/st-tech/zr-obp)
 29. [Open Bandit Dataset and Pipeline: Towards Realistic](https://arxiv.org/pdf/2008.07146)
 30. [Change Detection Based Thompson Sampling Algorithm For Non-Stationary Bandits](https://repository.iiitd.edu.in/xmlui/bitstream/handle/123456789/868/MT18164_Kunwar%20Zaid.pdf?sequence=1&isAllowed=y)
-31. [Taming Non-stationary Bandits:A Bayesian Approach](https://arxiv.org/html/1707.09727)
+31. [Taming Non-stationary Bandits: A Bayesian Approach](https://arxiv.org/html/1707.09727)
 32. [Cascading Bandits: Learning to Rank in the Cascade Model](https://mlanthology.org/icml/2015/kveton2015icml-cascading/)
-33. [ClickHouse Materialized Views — INSERT Triggers, AggregatingMergeTree & Refreshable MVs](https://systeminternals.dev/clickhouse/materialized-views/)
+33. [ClickHouse Materialized Views: INSERT Triggers, AggregatingMergeTree & Refreshable MVs](https://systeminternals.dev/clickhouse/materialized-views/)
 34. [ClickHouse Newsletter June 2022: Materialized, but still real-time](https://clickhouse.com/blog/clickhouse-newsletter-june-2022-materialized-but-still-real-time)
 35. [How to Use -ArgMin and -ArgMax Combinators in ClickHouse](https://oneuptime.com/blog/post/2026-03-31-clickhouse-combinator-argmin-argmax/view)
-36. [NEWSREEL 2017 « CLEF NEWSREEL](https://www.newsreelchallenge.org/previous-campaigns/newsreel-2017/)
-37. [Kaggle Otto推荐系统比赛TOP方案总结](https://lukan217.github.io/2023/02/12/Kaggle%20Otto%E6%8E%A8%E8%8D%90%E7%B3%BB%E7%BB%9F%E6%AF%94%E8%B5%9BTOP%E6%96%B9%E6%A1%88%E6%80%BB%E7%BB%93/)
+36. [NEWSREEL 2017, CLEF NEWSREEL](https://www.newsreelchallenge.org/previous-campaigns/newsreel-2017/)
+37. [Kaggle Otto recommender competition top solutions (in Chinese)](https://lukan217.github.io/2023/02/12/Kaggle%20Otto%E6%8E%A8%E8%8D%90%E7%B3%BB%E7%BB%9F%E6%AF%94%E8%B5%9BTOP%E6%96%B9%E6%A1%88%E6%80%BB%E7%BB%93/)

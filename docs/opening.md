@@ -1,36 +1,36 @@
-# Diapositivas de la apertura (RawTree/Tinybird, sáb 14/11) — lo que importa
+# Opening slides (RawTree/Tinybird, Sat 14/11): what matters
 
-Resumen del HTML oficial de las diapositivas. Solo lo que añade algo a `docs/reto.md`.
+Summary of the official slides' HTML. Only what adds something to `docs/challenge.md`.
 
-## Frases literales que cuentan
-- **Baseline (el 0 de la nota):** *"Best sellers of the category of the last product viewed: the starter kit."*
-  Y en la historia: *"Today it just shows the best sellers of the category of the last product viewed."*
-  → Ojo: el código del starter hace "los más vendidos de SIEMPRE", no por categoría. Si el 0 es por categoría, el
-  starter puntúa por DEBAJO de 0 (se recorta a 0). Por eso nuestro `ranking.py` usa como relleno los más vendidos
-  de la categoría de lo último visto: así nunca estamos por debajo de ninguna de las dos definiciones.
-- **Fallback** (respuesta tarde o inválida): *"replaced by the best sellers"*.
-- **Oráculo:** *"The best list possible, picked by the hidden model itself. Out of reach."*
-- **Sin suerte:** *"Purchase probability, not the coin flip; bought items lose appeal."*
-- **Desempate:** ingreso esperado por petición.
+## Literal quotes that matter
+- **Baseline (the 0 of the score):** *"Best sellers of the category of the last product viewed: the starter kit."*
+  And in the story: *"Today it just shows the best sellers of the category of the last product viewed."*
+  Note: the starter code does "all-time best sellers", not per category. If the 0 is per category, the starter scores
+  BELOW 0 (clipped to 0). That's why our `ranking.py` uses the best sellers of the last viewed category as filler: we
+  are never below either definition.
+- **Fallback** (late or invalid answer): *"replaced by the best sellers"*.
+- **Oracle:** *"The best list possible, picked by the hidden model itself. Out of reach."*
+- **No luck involved:** *"Purchase probability, not the coin flip; bought items lose appeal."*
+- **Tie-break:** expected revenue per request.
 - **Cold start:** *"New shopper, or a session viewing a new product."*
-- **La tienda se mueve:** *"Teams that generalise beat teams that memorise."* Compradores nuevos (muchos sin
-  historial), productos nuevos (solo descripción), tendencias (*"visible early in the live events"*), cambios de
-  precio (en catalog_updates) y roturas de stock (*"inactive products are invalid answers"*).
-- **Ejemplo de `model_version` en la diapositiva:** `"v3-mf-bandit"` (mf = matrix factorization; bandit =
-  aprendizaje online con exploración). Es una pista de por dónde esperan que vayan los buenos equipos.
-- **Latencia:** el baseline responde en ~1 s. Enviar en lotes, p. ej. cada medio segundo.
-- **Cierre:** *"Speed wins!"*
+- **The store moves:** *"Teams that generalise beat teams that memorise."* New shoppers (many with no history), new
+  products (description only), trends (*"visible early in the live events"*), price changes (in catalog_updates) and
+  stock-outs (*"inactive products are invalid answers"*).
+- **`model_version` example on the slide:** `"v3-mf-bandit"` (mf = matrix factorization; bandit = online learning with
+  exploration). A hint of where they expect good teams to go.
+- **Latency:** the baseline answers in ~1 s. Send in batches, e.g. every half second.
+- **Closing:** *"Speed wins!"*
 
-## Nota (puntos)
-Stream 70: conversión (compras esperadas por 100 peticiones), cold start, fiabilidad. Jurado 30: método, aprender
-del stream, uso de RawTree, comunicación. Solo cuenta dom 10:00-12:00 (CET).
+## Score (points)
+Stream 70: conversion (expected purchases per 100 requests), cold start, reliability. Jury 30: method, learning from
+the stream, use of RawTree, communication. Only Sun 10:00-12:00 (CET) counts.
 
-## Reto paralelo: "Best agentic use of RawTree"
-Un agente de IA que usa RawTree para guardar, analizar y actuar. *"The agent is the protagonist, not a wrapper."*
-Decide qué ingerir, qué preguntar y qué hacer con las respuestas (CLI, API, SDK o MCP). Se entrega repo + README +
-demo corta. *"A small project with a great story wins."*
+## Side challenge: "Best agentic use of RawTree"
+An AI agent that uses RawTree to store, analyse and act. *"The agent is the protagonist, not a wrapper."*
+It decides what to ingest, what to ask and what to do with the answers (CLI, API, SDK or MCP). Deliverable: repo +
+README + short demo. *"A small project with a great story wins."*
 
-## Herramientas que mencionan
-- Docs para agentes: `rawtree.com/llms.txt`. Skill oficial: `npx skills add rawtreedb/agent-skills` (ya la tenemos).
-- MCP: `https://mcp.rawtree.com/mcp`. CLI: `rtree`. SDK TypeScript `@rawtree/sdk`.
-- RawTree es *"fully ClickHouse compatible"*: se puede usar cualquier función de ClickHouse.
+## Tools they mention
+- Docs for agents: `rawtree.com/llms.txt`. Official skill: `npx skills add rawtreedb/agent-skills` (we have it).
+- MCP: `https://mcp.rawtree.com/mcp`. CLI: `rtree`. TypeScript SDK `@rawtree/sdk`.
+- RawTree is *"fully ClickHouse compatible"*: any ClickHouse function works.

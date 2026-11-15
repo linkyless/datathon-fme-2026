@@ -1,85 +1,87 @@
-# El reto: RawTree · Real-Time Recommendation
+# The challenge: RawTree real-time recommendation
 
-Fuentes oficiales: https://datathon.rawtree.dev/ · starter kit: https://github.com/rawtreedb/datathon-fme-2026
+Official sources: https://datathon.rawtree.dev/ and the starter kit at https://github.com/rawtreedb/datathon-fme-2026
 
-## El problema
-Una tienda online con ~5.000 productos en 10 categorías y 90 subcategorías. En la home y en cada ficha de producto
-hay una fila de 10 recomendados. Hoy muestra los más vendidos de siempre. Llegan ~3 compradores por segundo,
-día y noche. Para cada uno tenemos **3 segundos** para elegir 10 productos ordenados. Un modelo oculto simula si
-hace clic y si compra. Nuestro sistema tiene que funcionar solo, sin nadie pulsando botones.
+## The problem
+An online shop with ~5,000 products in 10 categories and 90 subcategories. The home page and every product page have
+a row of 10 recommendations. Today it shows the all-time best sellers. About 3 shoppers arrive every second, day and
+night. For each one we have **3 seconds** to pick 10 ordered products. A hidden model simulates whether they click and
+whether they buy. Our system has to run on its own, with nobody pressing buttons.
 
-## Las tablas
-| Tabla | Qué contiene | Tamaño |
+## The tables
+| Table | What it holds | Size |
 |---|---|---|
 | `shop.catalog` | product_id, category, subcategory, brand, price_eur, description, created_at, is_active | ~5k |
-| `shop.history_sessions` | 60 días del carrusel antiguo: context, recent_views, `shown` (10), `propensity` (10), clicked, purchased, revenue_eur | ~2M |
-| `shop.history_events` | 60 días de actividad fuera del carrusel: ts, event_type (view/add_to_cart/purchase), user_id, session_id, product_id, price_eur, device, region | ~12M |
-| `shop.requests` | En vivo: request_id, ts, user_id, is_new_user, context (device, region, page), recent_views [{product_id, ts}] | ~3/s |
-| `shop.events` | En vivo, mismo formato que history_events: tendencias en tiempo real | ~50/s |
-| `shop.catalog_updates` | En vivo: producto completo + ts + change (new_product, price_change, out_of_stock, back_in_stock) | |
-| `team_NN.feedback` | Solo nuestro: request_id, ts, shown, served_by (team/fallback), fallback_reason (missing/late/invalid), latency_ms, clicked, purchased, revenue_eur | |
-| `team_NN.scratch` | Tabla libre nuestra (features, embeddings). Se inserta JSON sin esquema | |
-| `team_NN.submissions` | Donde escribimos las respuestas | |
+| `shop.history_sessions` | 60 days of the old carousel: context, recent_views, `shown` (10), `propensity` (10), clicked, purchased, revenue_eur | ~2M |
+| `shop.history_events` | 60 days of activity outside the carousel: ts, event_type (view/add_to_cart/purchase), user_id, session_id, product_id, price_eur, device, region | ~12M |
+| `shop.requests` | Live: request_id, ts, user_id, is_new_user, context (device, region, page), recent_views [{product_id, ts}] | ~3/s |
+| `shop.events` | Live, same format as history_events: real-time trends | ~50/s |
+| `shop.catalog_updates` | Live: full product + ts + change (new_product, price_change, out_of_stock, back_in_stock) | |
+| `team_NN.feedback` | Ours only: request_id, ts, shown, served_by (team/fallback), fallback_reason (missing/late/invalid), latency_ms, clicked, purchased, revenue_eur | |
+| `team_NN.scratch` | Free table of ours (features, embeddings). Schemaless JSON inserts | |
+| `team_NN.submissions` | Where we write our answers | |
 
-Notas:
-- El catálogo actual = `shop.catalog` con la última actualización de cada producto encima (consulta 1 de `starter/queries.sql`).
-- El carrusel antiguo era "más vendidos + algo de azar": el historial está **sesgado hacia lo popular**.
-  `propensity` = probabilidad que tenía el sistema antiguo de mostrar ese producto en esa posición. Sirve para corregir el sesgo (IPS).
-- En `feedback`, `clicked`/`purchased` valen `""` si no pasó nada. La primera fila (`request_id = "__init__"`) es de relleno: ignórala.
+Notes:
+- The current catalog = `shop.catalog` with the latest update of each product on top (query 1 in `starter/queries.sql`).
+- The old carousel was "best sellers + some randomness": the history is **biased towards popular products**.
+  `propensity` = the probability the old system had of showing that product in that position. It's used to correct
+  the bias (IPS).
+- In `feedback`, `clicked`/`purchased` are `""` when nothing happened. The first row (`request_id = "__init__"`) is a
+  placeholder: ignore it.
 
-## Qué enviamos
+## What we send
 ```json
-[{"request_id": "r_01JD8K3...", "items": ["p_91aa", "...10 en total..."], "model_version": "v3-coview"}]
+[{"request_id": "r_01JD8K3...", "items": ["p_91aa", "...10 in total..."], "model_version": "v3-coview"}]
 ```
-- Exactamente 10 IDs distintos y activos. Si uno está agotado, la respuesta ENTERA es inválida.
-- Antes de 3 s desde `ts` (el reloj de los organizadores mira cada 0,5 s). Tarde o inválido → se muestra el fallback.
-- Una sola respuesta por petición. Enviar en lotes (cada ~0,5 s), no una llamada por petición.
-- El orden importa: los compradores miran mucho más las primeras posiciones.
-- Referencia: el baseline oficial consulta cada 0,3 s y responde en ~1 s (95 % en < 1,5 s).
+- Exactly 10 distinct, active IDs. If one is out of stock, the WHOLE answer is invalid.
+- Within 3 s of `ts` (the organisers' clock checks every 0.5 s). Late or invalid means the fallback is shown.
+- One answer per request. Send in batches (every ~0.5 s), not one call per request.
+- Order matters: shoppers look at the top slots much more.
+- Reference: the official baseline polls every 0.3 s and answers in ~1 s (95 % in < 1.5 s).
 
-## Calendario (hora de Barcelona; los datos están en UTC)
-- Sáb 10:00 → Dom 10:00: práctica con leaderboard público cada 10 min. No puntúa.
-- **Dom 10:00 → 12:00: ronda final, con datos NUEVOS** (compradores, productos y tendencias nuevos). Leaderboard oculto:
-  solo una luz verde/roja (verde si > 90 % de respuestas válidas y a tiempo en los últimos 5 min).
-- Se puede cambiar el código durante la final, pero vamos a ciegas: solo vemos nuestro `feedback`.
-- Dom 12:00: ranking final automático. Dom tarde: presentación + demo.
+## Schedule (Barcelona time; the data is in UTC)
+- Sat 10:00 to Sun 10:00: practice with a public leaderboard every 10 min. Doesn't count.
+- **Sun 10:00 to 12:00: final round, with NEW data** (new shoppers, products and trends). Hidden leaderboard: only a
+  green/red light (green if > 90 % of answers were valid and on time in the last 5 min).
+- Code can change during the final, but blind: we only see our own `feedback`.
+- Sun 12:00: automatic final ranking. Sun afternoon: presentation + demo.
 
-## Puntuación
-Final = 70 % de la nota del stream + hasta 30 del jurado.
+## Scoring
+Final = 70 % from the stream + up to 30 from the jury.
 
-| Parte | Criterio | Puntos |
+| Part | Criterion | Points |
 |---|---|---|
-| Stream (70) | Conversión: compras esperadas por 100 peticiones | 50 |
-| | Cold start: lo mismo solo en peticiones frías | 10 |
-| | Fiabilidad: % de respuestas válidas y a tiempo | 10 |
-| Jurado (30) | Método sólido y validado offline antes de ir en vivo | 10 |
-| | Aprender del stream: feedback, exploración, tendencias, precios, cold start | 10 |
-| | Uso de RawTree: features en SQL, embeddings, cómo lee y escribe el pipeline | 5 |
-| | Comunicación: que un product manager lo entienda | 5 |
+| Stream (70) | Conversion: expected purchases per 100 requests | 50 |
+| | Cold start: the same, only on cold requests | 10 |
+| | Reliability: % of valid, on-time answers | 10 |
+| Jury (30) | Sound method validated offline before going live | 10 |
+| | Learning from the stream: feedback, exploration, trends, prices, cold start | 10 |
+| | Use of RawTree: features in SQL, embeddings, how the pipeline reads and writes | 5 |
+| | Communication: a product manager should understand it | 5 |
 
-- `score = 100 × (nosotros − baseline) / (oráculo − baseline)`, recortado a [0, 100].
-- Baseline (0): **hay una contradicción oficial**. El README y el código de `starter/recommender.py` dicen "los más vendidos
-  de siempre en stock". Las diapositivas de la apertura dicen "los más vendidos de la categoría del último producto visto".
-  El código del starter hace lo primero. Pendiente de confirmar en el stand de RawTree. El fallback es el del README.
-- Oráculo (100) = lo que elegiría el modelo oculto.
-- Hay una "referencia" de los organizadores en el leaderboard. Se puede superar.
-- Petición fría: `is_new_user = true`, o `recent_views` incluye un producto añadido durante el evento (`new_product`).
-- Se puntúa la PROBABILIDAD de compra, no la compra real. Pero las compras reales cuentan un poco: quien ya compró un producto suele no quererlo otra vez.
-- Desempate: ingreso esperado por petición en la final.
+- `score = 100 * (us - baseline) / (oracle - baseline)`, clipped to [0, 100].
+- Baseline (0): **there's an official contradiction**. The README and the code in `starter/recommender.py` say
+  "all-time best sellers in stock". The opening slides say "best sellers of the category of the last viewed product".
+  The starter code does the former. The fallback is the README one.
+- Oracle (100) = what the hidden model would pick.
+- There's an organisers' "reference" on the leaderboard. It can be beaten.
+- Cold request: `is_new_user = true`, or `recent_views` includes a product added during the event (`new_product`).
+- What's scored is the purchase PROBABILITY, not the actual purchase. Real purchases matter a little: someone who
+  already bought a product usually doesn't want it again.
+- Tie-break: expected revenue per request in the final.
 
-## Lo que cambia en la final (diapositiva "The store moves")
-Compradores nuevos (muchos sin historial), productos nuevos (solo descripción), tendencias (se ven pronto en
-`shop.events`), cambios de precio (en `catalog_updates`) y roturas de stock (un producto inactivo invalida la respuesta).
+## What changes in the final ("The store moves" slide)
+New shoppers (many with no history), new products (description only), trends (they show up early in `shop.events`),
+price changes (in `catalog_updates`) and stock-outs (an inactive product voids the answer).
 
-## Reto paralelo: "Best agentic use of RawTree"
-Premio aparte, abierto a todos los equipos: un agente de IA que use RawTree para guardar, analizar y actuar sobre datos,
-donde el agente decide qué ingerir, qué preguntar y qué hacer con las respuestas. Se entrega un repo con README y una
-demo corta. "Un proyecto pequeño con una gran historia gana". Información en el stand de RawTree. NO es prioridad
-hasta que el recomendador esté estable.
+## Side challenge: "Best agentic use of RawTree"
+Separate prize, open to every team: an AI agent that uses RawTree to store, analyse and act on data, where the agent
+decides what to ingest, what to ask and what to do with the answers. You hand in a repo with a README and a short demo.
+"A small project with a great story wins". Info at the RawTree booth. NOT a priority until the recommender is stable.
 
-## Normas
-- Se permiten agentes de IA. Lo que no sepamos explicar puede penalizar.
-- Claves y feedback privados. Las recomendaciones salen de nuestro código.
-- El sistema corre desatendido en una máquina que no se duerma.
-- Los mejores equipos comparten el repo con el jurado: mantenerlo legible.
-- Pista oficial: "los equipos que generalizan ganan a los que memorizan".
+## Rules
+- AI agents are allowed. Whatever we can't explain may be penalised.
+- Keys and feedback are private. Recommendations must come from our code.
+- The system runs unattended on a machine that doesn't go to sleep.
+- The best teams share their repo with the jury: keep it readable.
+- Official hint: "teams that generalise beat teams that memorise".

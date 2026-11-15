@@ -1,7 +1,7 @@
 """e-samen-v2 · Modelo de ELECCIÓN: "de los 10 que le enseñamos, ¿cuál compra?". Dueño: Operador (Lester).
 
-    python -m src.eleccion --descargar   # baja de RawTree las 28.053 compras del carrusel e impresiones (~30 s)
-    python -m src.eleccion               # entrena, valida contra la v0 y guarda data/eleccion.json
+    python -m src.choice --descargar   # baja de RawTree las 28.053 compras del carrusel e impresiones (~30 s)
+    python -m src.choice               # entrena, valida contra la v0 y guarda data/eleccion.json
 
 La idea, para un product manager:
 - En el historial del carrusel tenemos 28.053 compras. En cada una sabemos los 10 productos enseñados, su orden y
@@ -306,7 +306,7 @@ def descargar() -> None:
 
 def main() -> None:
     import sys
-    from src.catalogo import cargar_catalogo
+    from src.catalog import load_catalog as cargar_catalogo
 
     if "--descargar" in sys.argv or not (DATA / "eleccion.pkl").exists():
         descargar()

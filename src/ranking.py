@@ -23,8 +23,8 @@ from itertools import chain
 
 import numpy as np
 
-from src import arbol, puntuacion
-from src.estado import Estado
+from src import scoring as puntuacion, tree as arbol
+from src.state import Estado
 
 NOMBRE = "e-samen-v1"
 """Va en model_version, que SALE EN EL LEADERBOARD PÚBLICO: solo nombre en clave + versión (e-samen-v1, e-samen-v2...),
@@ -61,7 +61,7 @@ LAMBDA_PRECIO = 0.0
 El deep research propone 0.05-0.1. APAGADO por defecto."""
 
 TENDENCIA = 0.0
-"""R4. Exponente η del empujón por tendencia: puntos × lift^η, con lift de src/tendencias.py (1 = normal,
+"""R4. Exponente η del empujón por tendencia: puntos × lift^η, con lift de src/trends.py (1 = normal,
 3 = el triple de actividad que de costumbre en la última media hora). La investigación propone 0.3-0.5.
 Se aplica a los candidatos de co-visitas Y al orden de las listas de relleno (populares de la categoría y
 populares de siempre), que es lo que reciben la v0 y los compradores sin vistas. APAGADO por defecto.
@@ -87,16 +87,16 @@ PARAMS: dict = {"decaimiento": DECAIMIENTO, "revisitas": REVISITAS, "afin_sub": 
                 "usar_vecinos": False, "usar_contexto": False, "tendencia": TENDENCIA,
                 "usar_modelo": False, "filtrar_comprados": True, "frio_historial": FRIO_HISTORIAL,
                 "usar_arbol": False}
-"""usar_arbol (R6): los 10 los elige el LightGBM de src/arbol.py entre los productos de la categoría de lo último
+"""usar_arbol (R6): los 10 los elige el LightGBM de src/tree.py entre los productos de la categoría de lo último
 visto (sin vistas: los 300 mejores por calidad y popularidad). Necesita data/arbol.txt y data/arbol.json
-(python -m src.arbol) y la librería lightgbm; si falta algo, se ignora y avisa en consola. APAGADO."""
+(python -m src.tree) y la librería lightgbm; si falta algo, se ignora y avisa en consola. APAGADO."""
 """filtrar_comprados: quitar lo ya comprado. En vivo (API, 1 h, ~2.800 pet./brazo) CF (CON filtro) 1,06 % vs C
 (sin filtro) 1,02 %: en total, empate. Se deja encendido (lo que corre en vivo con más tráfico). OJO: CF = CON filtro."""
-"""usar_modelo (R5): los 10 los elige la regresión logística de src/puntuacion.py en vez de la suma de puntos.
-Necesita data/puntuacion.json (python -m src.puntuacion); si no existe, se ignora (y avisa en consola). Lo ya
+"""usar_modelo (R5): los 10 los elige la regresión logística de src/scoring.py en vez de la suma de puntos.
+Necesita data/puntuacion.json (python -m src.scoring); si no existe, se ignora (y avisa en consola). Lo ya
 comprado no es candidato y, con filtrar_comprados, se quita (la primera versión lo ponía 1º: aprendió la recompra
 del historial, que en vivo no existe). APAGADO."""
-"""Parámetros por defecto. Las variantes A/B (src/servicio.py, Operador) pasan otro diccionario con las mismas
+"""Parámetros por defecto. Las variantes A/B (src/service.py, Operador) pasan otro diccionario con las mismas
 claves: así se prueban variantes en vivo sin tocar este archivo. Cada clave nueva se añade aquí con su valor.
 usar_vecinos / usar_contexto: piezas de Artai (D3, D4). APAGADAS hasta que Evaluación o un A/B digan que suben:
 sin interruptor, un simple reinicio del servicio cambiaría el modelo en vivo sin medirlo."""

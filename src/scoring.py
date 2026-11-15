@@ -1,6 +1,6 @@
 """R5 · Puntuación explicable: regresión logística. Dueño: Ranking.
 
-    python -m src.puntuacion          # entrena (o lee lo ya descargado de data/), enseña coeficientes y validación
+    python -m src.scoring          # entrena (o lee lo ya descargado de data/), enseña coeficientes y validación
 
 En vez de sumar puntos "a ojo", un modelo pequeño aprende cuánto vale cada señal para que un producto ENSEÑADO
 en el carrusel se compre. Es una sola neurona con sigmoide:  P(compra) = 1 / (1 + e^-(b + w1·x1 + w2·x2 + ...)).
@@ -29,8 +29,8 @@ from pathlib import Path
 
 import numpy as np
 
-from src import catalogo, covisitas, usuarios
-from src.estado import Estado, por_categoria
+from src import catalog, covisits as covisitas, users as usuarios
+from src.state import Estado, por_categoria
 from src.rawtree import query
 
 DATA = Path(__file__).resolve().parent.parent / "data"
@@ -143,7 +143,7 @@ _modelo_leido = False
 
 def modelo_guardado() -> dict | None:
     """Coeficientes de data/puntuacion.json, leídos UNA vez (la primera llamada). None si no existe el archivo:
-    entonces recommend() sigue sin modelo. Para crearlo: python -m src.puntuacion."""
+    entonces recommend() sigue sin modelo. Para crearlo: python -m src.scoring."""
     global _modelo, _modelo_leido
     if not _modelo_leido:
         _modelo_leido = True
@@ -156,7 +156,7 @@ def modelo_guardado() -> dict | None:
             _modelo = None
         if _modelo is None:  # se ve en la consola del servicio: sin esto, usar_modelo se ignoraría en silencio
             print("AVISO puntuacion: no hay data/puntuacion.json válido -> usar_modelo NO hace nada. "
-                  "Ejecuta: python -m src.puntuacion", flush=True)
+                  "Ejecuta: python -m src.scoring", flush=True)
     return _modelo
 
 
@@ -193,9 +193,9 @@ def _visitas_entreno() -> list[dict]:
 
 def _estado_entreno() -> Estado:
     """Piezas calculadas solo con datos anteriores a INICIO."""
-    cat = catalogo.cargar_catalogo(INICIO)
-    pop = catalogo.cargar_populares(INICIO)
-    return Estado(catalogo=cat, disponibles=catalogo.disponibles(cat), populares=pop,
+    cat = catalog.load_catalog(INICIO)
+    pop = catalog.load_popular(INICIO)
+    return Estado(catalogo=cat, disponibles=catalog.available(cat), populares=pop,
                   populares_categoria=por_categoria(cat, pop), covisitas=covisitas.cargar_covisitas(INICIO),
                   comprados=usuarios.cargar_comprados(INICIO))
 
@@ -283,7 +283,7 @@ def main() -> None:
               "coeficientes": beta[1:1 + len(NOMBRES)].tolist(), "puestos": beta[1 + len(NOMBRES):].tolist()}
     (DATA / "puntuacion.json").write_text(json.dumps(modelo, indent=1))
 
-    # Diagnóstico del propio modelo (la comparación con otras versiones la hace Evaluación con src/evaluar.py):
+    # Diagnóstico del propio modelo (la comparación con otras versiones la hace Evaluación con src/evaluate.py):
     # AUC en visitas posteriores al corte, con el Estado de ese corte y el mismo filtro de recompras.
     test = pickle.loads((DATA / f"test_{CORTE}.pkl").read_bytes())
     est = pickle.loads((DATA / f"estado_{CORTE}.pkl").read_bytes())

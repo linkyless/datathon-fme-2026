@@ -10,9 +10,9 @@ import time
 
 import numpy as np
 
-from src.catalogo import cargar_populares
+from src.catalog import load_popular as cargar_populares
 from src.embeddings import MAX_TEXTOS, PAUSA_S, pedir_embeddings, texto_producto
-from src.rawtree import insertar, query
+from src.rawtree import insert as insertar, query
 
 VECINOS = 20
 

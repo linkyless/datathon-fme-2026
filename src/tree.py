@@ -1,9 +1,9 @@
 """R6 · El "modelo grande": LightGBM (árboles) entrenado como ELECCIÓN dentro del carrusel. Dueño: Ranking.
 
-    python -m src.arbol      # entrena, valida (acierto del 1.º) y guarda data/arbol.txt + data/arbol.json
+    python -m src.tree      # entrena, valida (acierto del 1.º) y guarda data/arbol.txt + data/arbol.json
 
 La idea, para un product manager:
-- Igual que e-samen-v2 (src/eleccion.py): en cada visita con compra el carrusel antiguo enseñó 10 productos y el
+- Igual que e-samen-v2 (src/choice.py): en cada visita con compra el carrusel antiguo enseñó 10 productos y el
   comprador eligió uno. El modelo aprende qué hace que un producto GANE a sus 9 vecinos de carrusel. Comparar solo
   dentro de lo enseñado evita el sesgo del carrusel antiguo (enseñaba lo popular).
 - Diferencia con la v2: en vez de una neurona (cada señal suma por su cuenta), cientos de árboles pequeños que
@@ -67,7 +67,7 @@ SENALES = [
 NOMBRES = [n for n, _ in SENALES]
 
 
-# ---------------------------------------------------------------- calidad (copiado de src/eleccion.py, Lester)
+# ---------------------------------------------------------------- calidad (copiado de src/choice.py, Lester)
 _MU: dict = {}
 
 
@@ -273,7 +273,7 @@ def modelo_guardado() -> dict | None:
                        "rango": meta["rango"]}
         except (ImportError, OSError, ValueError, KeyError) as e:
             _modelo = None
-            print(f"AVISO arbol: usar_arbol NO hace nada ({e}). Ejecuta: python -m src.arbol", flush=True)
+            print(f"AVISO arbol: usar_arbol NO hace nada ({e}). Ejecuta: python -m src.tree", flush=True)
     return _modelo
 
 
@@ -329,12 +329,12 @@ def puntuar(peticion: dict, cand: list[str], estado, modelo: dict) -> np.ndarray
 def main() -> None:
     import lightgbm as lgb
 
-    from src.catalogo import cargar_catalogo
-    from src.covisitas import cargar_covisitas
+    from src.catalog import load_catalog as cargar_catalogo
+    from src.covisits import cargar_covisitas
 
     ruta = DATA / "eleccion.pkl"
-    if not ruta.exists():  # mismos datos que la v2: python -m src.eleccion --descargar
-        from src.eleccion import descargar
+    if not ruta.exists():  # mismos datos que la v2: python -m src.choice --descargar
+        from src.choice import descargar
         descargar()
     d = pickle.loads(ruta.read_bytes())
     ses, imp, primeras = d["ses"], d["imp"], d["compras"]

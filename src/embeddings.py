@@ -32,7 +32,7 @@ from pathlib import Path
 import numpy as np
 import requests
 
-from src.rawtree import insertar, query
+from src.rawtree import insert as insertar, query
 
 URL_EMBEDDINGS = "https://api.helmcode.com/v1/embeddings"
 MODELO = "qwen3-embedding"

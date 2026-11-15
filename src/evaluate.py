@@ -1,16 +1,16 @@
 """Evaluación offline: pone nota a cada versión con la última semana del historial. Dueño: Evaluación.
 
-    python -m src.evaluar                 # todos los BRAZOS con el test y el Estado guardados en data/
-    python -m src.evaluar --calibrar      # además, compara con el leaderboard real de cada versión que ha ido en vivo
-    python -m src.evaluar --recalcular    # rehace el Estado (cuando cambia alguna pieza)
-    python -m src.evaluar --brazos C,CF,v2 --n 20000   # solo esos brazos y una parte del test (más rápido)
-    python -m src.evaluar --recall        # aparte: recall@10 de las fuentes de candidatos sobre shop.history_events
+    python -m src.evaluate                 # todos los BRAZOS con el test y el Estado guardados en data/
+    python -m src.evaluate --calibrar      # además, compara con el leaderboard real de cada versión que ha ido en vivo
+    python -m src.evaluate --recalcular    # rehace el Estado (cuando cambia alguna pieza)
+    python -m src.evaluate --brazos C,CF,v2 --n 20000   # solo esos brazos y una parte del test (más rápido)
+    python -m src.evaluate --recall        # aparte: recall@10 de las fuentes de candidatos sobre shop.history_events
 
-Reproduce starter/offline_eval.ipynb con nuestro contrato (src/estado.py). El "examen" son 100.000 visitas al carrusel
+Reproduce starter/offline_eval.ipynb con nuestro contrato (src/state.py). El "examen" son 100.000 visitas al carrusel
 de la última semana; el Estado solo usa datos ANTERIORES a esa semana, para no mirar el futuro.
 
 Para que el offline se parezca al leaderboard (sáb noche):
-- Cada brazo usa EXACTAMENTE los parámetros con los que corrió en vivo (claves especiales de src/servicio.py
+- Cada brazo usa EXACTAMENTE los parámetros con los que corrió en vivo (claves especiales de src/service.py
   incluidas) y, si la respuesta falla o es inválida, se sustituye por populares, como hace el servicio.
 - `--calibrar` pide a la API pública del leaderboard la conversión esperada de cada versión nuestra y la del baseline
   en la MISMA ventana, y dice qué métrica offline ordena las versiones como el leaderboard (correlación de rangos).
@@ -32,9 +32,9 @@ import numpy as np
 import requests
 
 from src import ranking
-from src.estado import Estado, construir
+from src.state import Estado, construir
 from src.rawtree import TEAM, query
-from src.validar import errores_respuesta
+from src.validate import response_errors as errores_respuesta
 
 DATA = Path(__file__).resolve().parent.parent / "data"
 N_TEST = 100_000
@@ -60,13 +60,13 @@ BRAZOS: dict[str, dict | None] = {
     "MT": {"usar_modelo": True, "tendencia": 0.5},
     "MF": {"usar_modelo": True, "_filtrar_comprados": True},
     "MTF": {"usar_modelo": True, "tendencia": 0.5, "_filtrar_comprados": True},
-    "V2": {"_eleccion": True, "_filtrar": True},               # e-samen-v2 (src/eleccion.py) quitando lo ya comprado
+    "V2": {"_eleccion": True, "_filtrar": True},               # e-samen-v2 (src/choice.py) quitando lo ya comprado
     "V2N": {"_eleccion": True, "_filtrar": False},             # e-samen-v2 sin quitarlo (VARIANTES_V2 de servicio.py)
     "V3": {"_eleccion": True, "_filtrar": True, "_favoritas": True},  # v2 + fríos a su categoría favorita
-    "R6": {"usar_arbol": True},                                # árbol LightGBM de Leonardo (src/arbol.py), sin lo comprado
+    "R6": {"usar_arbol": True},                                # árbol LightGBM de Leonardo (src/tree.py), sin lo comprado
     "A6": {"_combo": True},                                    # en vivo desde 18:51: R6 con vistas, V3 sin vistas
 }
-"""Nombre -> params como en VARIANTES de src/servicio.py. Para medir una idea nueva (p. ej. el árbol R6 de Leonardo,
+"""Nombre -> params como en VARIANTES de src/service.py. Para medir una idea nueva (p. ej. el árbol R6 de Leonardo,
 con la clave que tenga en ranking.PARAMS), añade una línea aquí."""
 
 EN_VIVO = [("baseline", "baseline"), ("e-samen-v0", "C"), ("e-samen-v1-A", "A"), ("e-samen-v1-B", "B"),
@@ -137,7 +137,7 @@ def cargar_estado(corte: str, recalcular: bool) -> Estado:
             setattr(estado, campo.name, campo.default_factory())
     # construir() no rellena categorias_usuario (lo hace el refresco del servicio): A6 y V3 lo necesitan.
     if not estado.categorias_usuario:
-        from src import eleccion
+        from src import choice as eleccion
         print("Calculando las categorías favoritas de cada comprador antes del corte (una vez)...")
         estado.categorias_usuario = eleccion.cargar_categorias_usuario(corte)
         cambiado = True
@@ -152,12 +152,12 @@ def preparar_modelos(corte: str, brazos: list[str]) -> list[str]:
     """Crea lo que necesitan M* y v2, SIN mirar el futuro. Devuelve los brazos que no se pueden evaluar."""
     fuera = []
     if any(BRAZOS[b] and BRAZOS[b].get("usar_modelo") for b in brazos):
-        from src import puntuacion
+        from src import scoring as puntuacion
         if puntuacion.CORTE != corte:
             print(f"AVISO: puntuacion.CORTE={puntuacion.CORTE} ≠ corte {corte}: M, MT, MF y MTF no se evalúan")
             fuera += [b for b in brazos if BRAZOS[b] and BRAZOS[b].get("usar_modelo")]
         elif puntuacion.modelo_guardado() is None:  # falta o es de otra versión: M sería B en silencio
-            print("Entrenando R5 (python -m src.puntuacion, datos anteriores al corte)...")
+            print("Entrenando R5 (python -m src.scoring, datos anteriores al corte)...")
             puntuacion.main()
     if any(BRAZOS[b] and (BRAZOS[b].get("usar_arbol") or BRAZOS[b].get("_combo")) for b in brazos):
         try:
@@ -178,7 +178,7 @@ def _modelo_v2(corte: str):
     """Modelo de elección de Lester entrenado SOLO con datos < corte (su data/eleccion.json usa todo el historial,
     que incluye la semana del test: evaluarlo con él sería hacer trampa). Se guarda en data/ para los procesos.
     De paso guarda la curva de posición que aprende (ver `curva_posicion`)."""
-    from src import eleccion
+    from src import choice as eleccion
     ruta = DATA / f"eleccion_offline_{corte}.pkl"
     if ruta.exists():
         guardado = pickle.loads(ruta.read_bytes())
@@ -187,7 +187,7 @@ def _modelo_v2(corte: str):
     if eleccion.CORTE != corte:
         raise ValueError(f"eleccion.CORTE={eleccion.CORTE} ≠ corte {corte}")
     if not (DATA / "eleccion.pkl").exists():
-        print("Descargando los datos de la v2 (python -m src.eleccion --descargar, ~30 s)...")
+        print("Descargando los datos de la v2 (python -m src.choice --descargar, ~30 s)...")
         eleccion.descargar()
     print("Entrenando la v2 con datos anteriores al corte...")
     d = pickle.loads((DATA / "eleccion.pkl").read_bytes())
@@ -214,14 +214,14 @@ def _arbol_offline(corte: str) -> dict:
     """R6 de Leonardo sin mirar el futuro. Los árboles (data/arbol.txt) se entrenan solo con datos < corte, pero
     data/arbol.json guarda calidad y popularidad con TODO el historial (para vivo), y eso incluye las compras de la
     semana del test: el árbol "sabría" qué se compró en el examen. Aquí se recalculan con datos < corte, igual que
-    en la validación de src/arbol.py. Se deja instalado en src.arbol para que ranking.recommend lo use."""
+    en la validación de src/tree.py. Se deja instalado en src.tree para que ranking.recommend lo use."""
     import lightgbm as lgb
     from collections import Counter
-    from src import arbol
+    from src import tree as arbol
     if arbol.CORTE != corte:
         raise ValueError(f"arbol.CORTE={arbol.CORTE} ≠ corte {corte}")
     if not (DATA / "arbol.txt").exists():
-        raise FileNotFoundError("falta data/arbol.txt: ejecuta python -m src.arbol")
+        raise FileNotFoundError("falta data/arbol.txt: ejecuta python -m src.tree")
     ruta = DATA / f"arbol_offline_{corte}.pkl"
     if ruta.exists():
         lc, rango = pickle.loads(ruta.read_bytes())
@@ -242,7 +242,7 @@ def _arbol_offline(corte: str) -> dict:
 # ---------------------------------------------------------------- recomendar como el servicio
 def preparar_brazo(nombre: str, estado: Estado) -> tuple[Estado, dict, bool, bool, bool]:
     """(Estado del brazo, params para recommend, ¿filtrar lo comprado por comprador?, ¿usar la v2?, ¿combo A6?).
-    Mismas claves especiales que respuesta_segura() de src/servicio.py."""
+    Mismas claves especiales que respuesta_segura() de src/service.py."""
     params = BRAZOS[nombre]
     if params is None:  # baseline: solo catálogo, disponibles y más vendidos de siempre
         return Estado(catalogo=estado.catalogo, disponibles=estado.disponibles, populares=estado.populares), {}, \
@@ -261,7 +261,7 @@ def recomendaciones(nombre: str, test: list[dict], estado: Estado, corte: str) -
     est, params, filtrar, v2, combo = preparar_brazo(nombre, estado)
     modelo = _modelo_v2(corte) if v2 or combo else None
     if v2 or combo:
-        from src import eleccion
+        from src import choice as eleccion
     if combo or params.get("usar_arbol"):
         _arbol_offline(corte)  # en este proceso: ranking.recommend usará el árbol sin mirar el futuro
     disponibles = estado.disponibles

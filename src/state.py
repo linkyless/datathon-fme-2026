@@ -14,12 +14,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from src import catalogo, coldstart, covisitas, tendencias, usuarios
+from src import catalog, coldstart, covisits as covisitas, trends as tendencias, users as usuarios
 
 
 @dataclass
 class Estado:
-    # --- Operador (src/catalogo.py) ---
+    # --- Operador (src/catalog.py) ---
     catalogo: dict[str, dict] = field(default_factory=dict)
     """product_id -> {"category", "subcategory", "brand", "price_eur", "is_active", ...}"""
     disponibles: set[str] = field(default_factory=set)
@@ -30,16 +30,16 @@ class Estado:
     """category -> más vendidos de esa categoría. Es el baseline de las diapositivas (docs/apertura.md).
     Se calcula a partir de `catalogo` y `populares` (sin consultas): ver `por_categoria()`."""
 
-    # --- Ranking (src/covisitas.py, src/usuarios.py) ---
+    # --- Ranking (src/covisits.py, src/users.py) ---
     covisitas: dict[str, list[tuple[str, float]]] = field(default_factory=dict)
     """product_id -> [(otro_product_id, peso), ...] de mayor a menor peso. "Quien vio X vio/compró Y"."""
     comprados: dict[str, set[str]] = field(default_factory=dict)
     """user_id -> productos que ya compró (no se los volvemos a enseñar)."""
     categorias_usuario: dict[str, list[str]] = field(default_factory=dict)
-    """user_id -> sus 3 categorías con más actividad (vistas + carrito + compras), de más a menos (src/eleccion.py).
+    """user_id -> sus 3 categorías con más actividad (vistas + carrito + compras), de más a menos (src/choice.py).
     Para el comprador SIN vistas: enseñarle su categoría favorita convierte ~8× más (0,78 % frente a 0,09 %)."""
     tendencias: dict[str, float] = field(default_factory=dict)
-    """product_id -> lift (src/tendencias.py): >1 = más actividad que de costumbre en la última media hora."""
+    """product_id -> lift (src/trends.py): >1 = más actividad que de costumbre en la última media hora."""
 
     # --- Datos y relato (src/coldstart.py) ---
     populares_contexto: dict[tuple[str, str], list[str]] = field(default_factory=dict)
@@ -69,8 +69,8 @@ def construir(hasta: str | None = None) -> Estado:
     Los perfiles de R6 vienen de team_29.scratch; si el corte no está construido ahí,
     ejecuta antes `python -m src.coldstart` (en vivo) o `construir_perfiles(hasta)` (offline).
     """
-    cat = catalogo.cargar_catalogo(hasta)
-    pop = catalogo.cargar_populares(hasta)
+    cat = catalog.load_catalog(hasta)
+    pop = catalog.load_popular(hasta)
     perfiles_comprador, perfiles_producto = coldstart.cargar_perfiles(hasta)
     if not perfiles_comprador and not perfiles_producto:
         # este corte no está construido en scratch: se construye AHORA con el mismo corte
@@ -78,7 +78,7 @@ def construir(hasta: str | None = None) -> Estado:
         perfiles_comprador, perfiles_producto = coldstart.construir_perfiles(hasta)
     return Estado(
         catalogo=cat,
-        disponibles=catalogo.disponibles(cat),
+        disponibles=catalog.available(cat),
         populares=pop,
         populares_categoria=por_categoria(cat, pop),
         covisitas=covisitas.cargar_covisitas(hasta),

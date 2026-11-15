@@ -1,10 +1,10 @@
-"""Cliente mínimo de RawTree que usa todo el equipo. Dueño: Operador.
+"""Minimal RawTree client used by the whole project.
 
-    from src.rawtree import query, insertar, TEAM
-    filas = query("SELECT count() AS n FROM shop.requests")   # -> [{"n": ...}]
-    insertar("scratch", [{"tipo": "prueba", "x": 1}])          # escribe en team_NN.scratch
+    from src.rawtree import query, insert, TEAM
+    rows = query("SELECT count() AS n FROM shop.requests")   # -> [{"n": ...}]
+    insert("scratch", [{"kind": "test", "x": 1}])            # writes to team_NN.scratch
 
-Lee TEAM_ID y RAWTREE_API_KEY del .env (o del entorno). Nunca imprime la clave.
+Reads TEAM_ID and RAWTREE_API_KEY from .env (or from the environment). Never prints the key.
 """
 from __future__ import annotations
 
@@ -14,38 +14,38 @@ from typing import Any
 
 import requests
 
-Fila = dict[str, Any]
+Row = dict[str, Any]
 
 
-def _cargar_env() -> None:
-    """Carga .env de la raíz del repo sin pisar variables que ya existan."""
+def _load_env() -> None:
+    """Loads .env from the repo root without overwriting variables that already exist."""
     env = Path(__file__).resolve().parent.parent / ".env"
     if env.exists():
-        for linea in env.read_text(encoding="utf-8").splitlines():
-            if linea.strip().startswith("#") or "=" not in linea:
+        for line in env.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("#") or "=" not in line:
                 continue
-            clave, _, valor = linea.partition("=")
-            os.environ.setdefault(clave.strip(), valor.strip())
+            key, _, value = line.partition("=")
+            os.environ.setdefault(key.strip(), value.strip())
 
 
-_cargar_env()
+_load_env()
 API = os.environ.get("RAWTREE_API_URL", "https://api.rawtree.com")
 TEAM = os.environ.get("TEAM_ID", "")
 _http = requests.Session()
 _http.headers["Authorization"] = f"Bearer {os.environ.get('RAWTREE_API_KEY', '')}"
 
 
-def query(sql: str, timeout: float = 60) -> list[Fila]:
-    """Ejecuta UNA sentencia SQL y devuelve las filas como diccionarios."""
+def query(sql: str, timeout: float = 60) -> list[Row]:
+    """Runs ONE SQL statement and returns the rows as dictionaries."""
     r = _http.post(f"{API}/v1/query", json={"sql": sql}, timeout=timeout)
     if r.status_code >= 400:
         raise RuntimeError(f"RawTree {r.status_code}: {r.text[:300]}")
     return r.json()["data"]
 
 
-def insertar(tabla: str, filas: list[Fila], timeout: float = 30) -> int:
-    """Inserta filas JSON en team_NN.<tabla>. Devuelve cuántas se escribieron."""
-    r = _http.post(f"{API}/v1/tables/{tabla}", params={"database": TEAM}, json=filas, timeout=timeout)
+def insert(table: str, rows: list[Row], timeout: float = 30) -> int:
+    """Inserts JSON rows into team_NN.<table>. Returns how many were written."""
+    r = _http.post(f"{API}/v1/tables/{table}", params={"database": TEAM}, json=rows, timeout=timeout)
     if r.status_code >= 400:
         raise RuntimeError(f"RawTree {r.status_code}: {r.text[:300]}")
-    return int(r.json().get("written_rows", len(filas)))
+    return int(r.json().get("written_rows", len(rows)))
